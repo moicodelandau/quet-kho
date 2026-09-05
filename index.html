@@ -79,6 +79,38 @@ button { font-family: inherit; touch-action: manipulation; }
 }
 .screen h2 { margin: 8px 0 16px; }
 
+/* ===== dau man hinh phu: tieu de + nut dong LUON o tren cung, trong tam ngon tay ===== */
+.sheet-head {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 10px;
+  margin: -10px -10px 12px;
+  padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.sheet-head h2 { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 19px; }
+.btn-close-x {
+  flex: 0 0 auto;
+  width: 44px; height: 44px; border-radius: 12px;
+  background: var(--btn-gray); color: var(--btn-gray-text);
+  border: 1px solid var(--border);
+  font-size: 20px; font-weight: 700; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.btn-close-x:active { transform: scale(.94); }
+
+/* ===== dong ho ngay gio ===== */
+.clock {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center;
+  line-height: 1.15; font-variant-numeric: tabular-nums;
+}
+.clock b { font-size: 15px; font-weight: 700; }
+.clock i { font-style: normal; font-size: 11px; color: var(--muted); }
+.setup-clock {
+  text-align: center; color: var(--muted); font-size: 14px;
+  margin: -14px 0 20px; font-variant-numeric: tabular-nums;
+}
+
 /* ===== 1. man setup ===== */
 #screen-setup { display: flex; align-items: center; min-height: 100dvh; }
 .setup-card {
@@ -152,9 +184,30 @@ input[type=text]:focus { outline: 2px solid var(--c-nhap); border-color: transpa
   border: 2px solid var(--accent);
   box-shadow: 0 0 0 4px var(--accent-dim);
   transition: border-color .25s, box-shadow .25s;
+  min-height: 200px;
 }
-#reader { width: 100%; min-height: 190px; }
-#reader video { display: block; }
+#reader { width: 100%; min-height: 200px; }
+/* html5-qrcode dat width/height bang px inline vao <video> — tren iPhone con so do
+ * hay ra 0 hoac lech khung -> chi thay o den. Ep lai bang CSS de video luon phu khung. */
+#reader video {
+  display: block !important;
+  width: 100% !important;
+  height: auto !important;
+  max-height: 46dvh;
+  object-fit: cover;
+  background: #000;
+}
+#reader img { display: none; }        /* anh placeholder cua thu vien */
+#reader > div:first-child { border: none !important; }
+
+/* bao loi / huong dan khi camera khong len hinh */
+.cam-status {
+  position: absolute; inset: 0; z-index: 6;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 18px; text-align: center;
+  background: rgba(11, 15, 20, .93); color: #fff;
+}
+.cam-status p { font-size: 14px; line-height: 1.45; }
 .torch-fab {
   position: absolute; right: 10px; bottom: 10px; z-index: 5;
   width: 54px; height: 54px; border-radius: 50%;
@@ -435,6 +488,12 @@ body.serial-on #reader-wrap {
 #screen-hang h2, #screen-model h2,
 #screen-hang input, #screen-model input,
 #screen-hang .btn-big, #screen-model .btn-big { flex: 0 0 auto; }
+/* trong cac man hinh flex-column, dau man hinh khong duoc co lai */
+.sheet-head { flex: 0 0 auto; }
+/* rule '#screen-hang h2 {flex:0 0 auto}' o tren manh hon .sheet-head h2 ->
+ * tieu de khong gian ra, nut ✕ dinh sat chu thay vi nam mep phai. Ghi de lai. */
+#screen-hang .sheet-head h2,
+#screen-model .sheet-head h2 { flex: 1 1 auto; }
 
 #screen-hang input[type=text], #screen-model input[type=text],
 #screen-newmodel input[type=text], #screen-newmodel select {
@@ -500,6 +559,7 @@ body.serial-on #reader-wrap {
     <div class="setup-card">
       <button class="btn-theme btn-icon setup-theme" type="button" title="Đổi giao diện">🌗</button>
       <h2>📦 Quét kho</h2>
+      <p id="setup-clock" class="setup-clock"></p>
       <label>Tên người quét
         <input id="inp-nguoi" type="text" placeholder="VD: Hải" autocomplete="off">
       </label>
@@ -516,6 +576,9 @@ body.serial-on #reader-wrap {
 
     <div class="topbar">
       <span id="counter" title="Số lần quét trong phiên">0</span>
+      <span id="clock" class="clock" title="Ngày giờ hiện tại">
+        <b id="clock-time">--:--:--</b><i id="clock-date"></i>
+      </span>
       <span id="session-label" class="muted"></span>
       <button class="btn-theme btn-icon" type="button" title="Đổi giao diện">🌗</button>
       <button id="btn-settings" class="btn-icon" title="Đổi phiên / người">⚙</button>
@@ -545,6 +608,10 @@ body.serial-on #reader-wrap {
     <div id="reader-wrap">
       <div id="reader"></div>
       <button id="btn-torch" class="torch-fab hidden" type="button" title="Đèn flash (chỗ tối)">🔦</button>
+      <div id="cam-status" class="cam-status hidden">
+        <p id="cam-msg"></p>
+        <button id="btn-cam-retry" type="button" class="btn-tool">↻ Bật lại camera</button>
+      </div>
     </div>
 
     <!-- go tay khi tem serial mo / khong quet duoc -->
@@ -581,7 +648,10 @@ body.serial-on #reader-wrap {
 
   <!-- ===== 3. UNKNOWN (ma la) ===== -->
   <div id="screen-unknown" class="screen hidden unknown-bg">
-    <h2>⚠ MÃ LẠ</h2>
+    <div class="sheet-head">
+      <h2>⚠ MÃ LẠ</h2>
+      <button id="btn-close-unknown" class="btn-close-x" type="button" title="Đóng">✕</button>
+    </div>
     <div id="unknown-barcode" class="unknown-code"></div>
     <p>Tìm sản phẩm để gán mã này:</p>
     <input id="inp-search" type="text" placeholder="Gõ mã hàng hoặc tên hàng..." autocomplete="off">
@@ -591,34 +661,44 @@ body.serial-on #reader-wrap {
 
   <!-- ===== CHON PHIEU GIAO HANG ===== -->
   <div id="screen-phieu" class="screen hidden">
-    <h2>📋 Phiếu chờ xuất</h2>
+    <div class="sheet-head">
+      <h2>📋 Phiếu chờ xuất</h2>
+      <button id="btn-close-phieu" class="btn-close-x" type="button" title="Đóng">✕</button>
+    </div>
     <input id="inp-phieu-search" type="text" autocomplete="off"
            placeholder="Gõ số phiếu, tên khách hoặc mã hàng...">
     <div id="phieu-results"></div>
-    <button id="btn-close-phieu" class="btn-big btn-gray">Đóng</button>
   </div>
 
   <!-- ===== CHON HANG (giong may kiem hang cu: dang ky hang truoc) ===== -->
   <div id="screen-hang" class="screen hidden">
-    <h2>🏷 Chọn hãng</h2>
+    <div class="sheet-head">
+      <h2>🏷 Chọn hãng</h2>
+      <button id="btn-close-hang" class="btn-close-x" type="button" title="Đóng">✕</button>
+    </div>
     <input id="inp-hang-search" type="text" autocomplete="off" placeholder="Gõ tên hãng...">
     <div id="hang-grid" class="hang-grid"></div>
-    <button id="btn-close-hang" class="btn-big btn-gray">Đóng</button>
   </div>
 
   <!-- ===== CHON LOAI MAY ===== -->
   <div id="screen-model" class="screen hidden">
-    <h2 id="model-title">Chọn loại máy</h2>
+    <div class="sheet-head">
+      <button id="btn-back-hang" class="btn-close-x" type="button" title="Đổi hãng">←</button>
+      <h2 id="model-title">Chọn loại máy</h2>
+      <button id="btn-close-model" class="btn-close-x" type="button" title="Đóng">✕</button>
+    </div>
     <input id="inp-model-search" type="text" autocomplete="off"
            placeholder="Gõ mã hàng hoặc tên máy...">
     <div id="model-results"></div>
     <button id="btn-may-moi" class="btn-big btn-green">➕ Máy mới — chưa có trong danh sách</button>
-    <button id="btn-back-hang" class="btn-big btn-gray">← Đổi hãng</button>
   </div>
 
   <!-- ===== DANG KY MAY MOI (dang ky ngay tren dien thoai) ===== -->
   <div id="screen-newmodel" class="screen hidden">
-    <h2>➕ Đăng ký máy mới</h2>
+    <div class="sheet-head">
+      <h2>➕ Đăng ký máy mới</h2>
+      <button id="btn-nm-cancel" class="btn-close-x" type="button" title="Huỷ">✕</button>
+    </div>
     <label>Hãng
       <input id="inp-nm-hang" type="text" autocomplete="off" placeholder="VD: DAIKIN">
     </label>
@@ -643,13 +723,15 @@ body.serial-on #reader-wrap {
              placeholder="Gõ hoặc để trống nếu thùng không có mã vạch">
     </label>
     <button id="btn-nm-save" class="btn-big btn-green">LƯU &amp; QUÉT SERIAL</button>
-    <button id="btn-nm-cancel" class="btn-big btn-gray">Huỷ</button>
     <p id="nm-status" class="muted"></p>
   </div>
 
   <!-- ===== SERIAL TRUNG ===== -->
   <div id="screen-dup" class="screen hidden unknown-bg">
-    <h2>⚠ SERIAL TRÙNG</h2>
+    <div class="sheet-head">
+      <h2>⚠ SERIAL TRÙNG</h2>
+      <button id="btn-close-dup" class="btn-close-x" type="button" title="Đóng">✕</button>
+    </div>
     <div id="dup-serial" class="unknown-code"></div>
     <p id="dup-reason"></p>
     <button id="btn-dup-skip" class="btn-big btn-gray">Bỏ qua, quét tiếp</button>
@@ -658,9 +740,11 @@ body.serial-on #reader-wrap {
 
   <!-- ===== SUMMARY overlay ===== -->
   <div id="screen-summary" class="screen hidden">
-    <h2>Tổng kết phiên</h2>
+    <div class="sheet-head">
+      <h2>Σ Tổng kết phiên</h2>
+      <button id="btn-close-summary" class="btn-close-x" type="button" title="Đóng">✕</button>
+    </div>
     <div id="summary-content">Đang tải...</div>
-    <button id="btn-close-summary" class="btn-big btn-gray">Đóng</button>
   </div>
 
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -931,6 +1015,28 @@ function fmtTime(d) {
     String(d.getSeconds()).padStart(2, "0");
 }
 
+var THU_VN = ["Chủ nhật", "Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"];
+
+function fmtDate(d) {
+  return String(d.getDate()).padStart(2, "0") + "/" +
+    String(d.getMonth() + 1).padStart(2, "0") + "/" + d.getFullYear();
+}
+
+/* Dong ho ngay gio: gio quet ghi len Sheet lay tu may nay, nen de nguoi quet
+ * nhin thay luon — lech gio thi biet ngay ma sua, khong doi den luc doi chieu so. */
+function startClock() {
+  var tick = function () {
+    var d = new Date();
+    var t = fmtTime(d), ngay = fmtDate(d);
+    var ct = $("clock-time"), cd = $("clock-date"), sc = $("setup-clock");
+    if (ct) ct.textContent = t;
+    if (cd) cd.textContent = ngay;
+    if (sc) sc.textContent = THU_VN[d.getDay()] + " · " + ngay + " · " + t;
+  };
+  tick();
+  setInterval(tick, 1000);
+}
+
 // ==================== INIT ====================
 document.addEventListener("DOMContentLoaded", function () {
   // thiet_bi fingerprint don gian
@@ -956,9 +1062,13 @@ document.addEventListener("DOMContentLoaded", function () {
   // che do cuoi cung dang dung
   setMode(localStorage.getItem(LS.chedo) || "NHAP", true);
 
+  startClock();
+
   $("btn-start").addEventListener("click", startFromSetup);
   $("btn-settings").addEventListener("click", backToSetup);
   $("btn-torch").addEventListener("click", toggleTorch);
+  $("btn-cam-retry").addEventListener("click", restartScanner);
+  $("btn-close-unknown").addEventListener("click", skipUnknown);
   $("btn-refresh-mapping").addEventListener("click", function () { loadMapping(true); });
   $("btn-summary").addEventListener("click", showSummary);
   $("btn-close-summary").addEventListener("click", function () {
@@ -971,6 +1081,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
   document.querySelectorAll(".mode-btn").forEach(function (btn) {
     btn.addEventListener("click", function () { setMode(btn.dataset.mode, false); });
+  });
+
+  // Chuyen sang app khac roi quay lai: iOS dung camera, quay lai hay bi khung den
+  // -> tu bat lai khi man hinh sang tro lai.
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "visible") return;
+    if ($("screen-scan").classList.contains("hidden")) return;
+    var v = document.querySelector("#reader video");
+    if (!state.scanner || !v || v.videoWidth === 0) restartScanner();
   });
 
   window.addEventListener("online", flushQueue);
@@ -1058,7 +1177,11 @@ function startFromSetup() {
   $("session-label").textContent = session + " · " + nguoi;
   updateCounter(0);
 
-  loadMapping(false).then(startScanner);
+  // Camera bat NGAY trong cu cham nay — cho loadMapping() xong moi bat thi
+  // iPhone coi nhu het quyen tuong tac va tra ve khung den. Mapping tai song song,
+  // khong can cho vi danh muc goc da nam san trong app (MAPPING_BASE).
+  startScanner();
+  loadMapping(false);
 }
 
 function backToSetup() {
@@ -1131,9 +1254,21 @@ function lookup(rawCode) {
 }
 
 // ==================== SCANNER ====================
-function startScanner() {
-  if (state.scanner) return;
-  var formats = [
+/* iPhone/Safari khac Android o 3 diem, ca 3 deu lam camera "den thui":
+ *   1. getUserMedia phai chay NGAY trong cu cham cua nguoi dung — cho fetch xong
+ *      moi goi thi Safari coi nhu het quyen tuong tac -> stream co ma khong hien.
+ *   2. <video> phai co playsinline + muted + phai goi play() bang tay.
+ *   3. html5-qrcode dat width/height px inline vao <video>, tren iOS hay ra 0.
+ * startScanner() xu ly ca 3, va co dong ho canh (watchdog): sau 2.5s ma videoWidth
+ * van = 0 thi bao ro ly do + nut bat lai, thay vi de nguoi dung nhin o den.
+ */
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function scanFormats() {
+  return [
     Html5QrcodeSupportedFormats.EAN_13,
     Html5QrcodeSupportedFormats.EAN_8,
     Html5QrcodeSupportedFormats.UPC_A,
@@ -1141,17 +1276,97 @@ function startScanner() {
     Html5QrcodeSupportedFormats.CODE_39,
     Html5QrcodeSupportedFormats.QR_CODE
   ];
-  state.scanner = new Html5Qrcode("reader", { formatsToSupport: formats, verbose: false });
-  state.scanner.start(
-    { facingMode: "environment" },
-    { fps: 10, qrbox: { width: 280, height: 160 } },
-    onScan,
-    function () { /* khong match frame nay — im lang */ }
-  ).then(function () {
-    showTorchButton();
-  }).catch(function (e) {
-    alert("Không mở được camera: " + e + "\nKiểm tra đã cấp quyền camera và mở bằng HTTPS.");
+}
+
+function camStatus(msg) {
+  var box = $("cam-status");
+  if (!box) return;
+  if (!msg) { box.classList.add("hidden"); return; }
+  $("cam-msg").textContent = msg;
+  box.classList.remove("hidden");
+}
+
+/* Bat buoc video chay inline — thieu cai nay iOS chi hien khung den. */
+function hardenVideo() {
+  var v = document.querySelector("#reader video");
+  if (!v) return null;
+  v.setAttribute("playsinline", "true");
+  v.setAttribute("webkit-playsinline", "true");
+  v.setAttribute("autoplay", "true");
+  v.muted = true;
+  v.playsInline = true;
+  var p = v.play();
+  if (p && p.catch) p.catch(function () { });
+  return v;
+}
+
+/* Sau khi start(): kiem tra co hinh that khong. videoWidth = 0 nghia la
+ * stream chua ve duoc khung hinh nao -> bao nguoi dung thay vi de o den. */
+function watchVideo() {
+  [400, 1200, 2500].forEach(function (ms) {
+    setTimeout(function () {
+      if (!state.scanner) return;
+      var v = hardenVideo();
+      if (!v) return;
+      if (v.videoWidth > 0) { camStatus(""); return; }
+      if (ms === 2500) {
+        camStatus("Camera đã bật nhưng chưa lên hình. Thử: đóng hẳn tab rồi mở lại link, " +
+          "hoặc kiểm tra app khác (Zalo, FaceTime...) có đang giữ camera không.");
+      }
+    }, ms);
   });
+}
+
+function startScanner() {
+  if (state.scanner) return;
+  camStatus("Đang bật camera...");
+  state.scanner = new Html5Qrcode("reader", { formatsToSupport: scanFormats(), verbose: false });
+
+  // qrbox: thu vien ve 4 mieng che toi quanh khung ngam. Neu kich thuoc khung
+  // tinh sai (hay gap tren iOS) thi 4 mieng do phu kin -> dung la "o den".
+  //   iOS  : bo han qrbox, quet toan khung hinh — khong con lop che nao de hong.
+  //   Khac : qrbox tinh theo khung hinh that, khong dat cung 280x160 (man nho se
+  //          bi khung lon hon video -> thu vien bao loi va khong ve gi).
+  var cfg = isIOS() ? { fps: 10 } : {
+    fps: 10,
+    qrbox: function (w, h) {
+      var bw = Math.floor(Math.min(w * 0.9, 320));
+      var bh = Math.floor(Math.min(h * 0.7, 200));
+      return { width: bw, height: bh };
+    }
+  };
+
+  var onErr = function () { /* khong match frame nay — im lang */ };
+
+  state.scanner.start({ facingMode: "environment" }, cfg, onScan, onErr)
+    .then(afterStart)
+    .catch(function (e1) {
+      // Fallback: vai may (nhat la iPhone cu) tu choi facingMode -> chon camera sau theo deviceId
+      Html5Qrcode.getCameras().then(function (cams) {
+        if (!cams || !cams.length) throw e1;
+        var back = cams.filter(function (c) {
+          return /back|rear|sau|environment/i.test(c.label || "");
+        })[0] || cams[cams.length - 1];
+        return state.scanner.start(back.id, cfg, onScan, onErr).then(afterStart);
+      }).catch(function (e2) {
+        state.scanner = null;
+        camStatus("Không mở được camera: " + (e2 && e2.message ? e2.message : e2) +
+          "\nKiểm tra: link phải là https://, và đã bấm Cho phép khi Safari hỏi quyền camera.");
+      });
+    });
+}
+
+function afterStart() {
+  camStatus("");
+  hardenVideo();
+  watchVideo();
+  showTorchButton();
+}
+
+/* Bat lai camera khi bam nut ↻ (hoac quay lai app sau khi bi treo). */
+function restartScanner() {
+  stopScanner();
+  setTimeout(startScanner, 300);
 }
 
 function stopScanner() {
@@ -1159,6 +1374,8 @@ function stopScanner() {
   var s = state.scanner; state.scanner = null; state.torchOn = false;
   // html5-qrcode nem loi DONG BO khi camera chua chay -> phai bao try, .catch() khong du
   try { var p = s.stop(); if (p && p.catch) p.catch(function () { }); } catch (e) { }
+  try { s.clear(); } catch (e) { }   // xoa <video> cu, tranh chong 2 khung khi bat lai
+  camStatus("");
   $("btn-torch").classList.add("hidden");
   $("btn-torch").classList.remove("active");
 }
@@ -1175,12 +1392,15 @@ function getVideoTrack() {
 }
 
 /**
- * Nut den LUON hien khi camera dang chay.
- * Ly do: nhieu may Android chi bao co torch sau khi track chay on dinh vai tram ms —
- * an nut theo getCapabilities() ngay luc start lam nut "bien mat" tren may co den that.
- * Khong ho tro that (iPhone/Safari) thi bam vao se bao ro, khong im lang.
+ * Nut den hien khi camera dang chay — TRU iPhone/iPad.
+ * WebKit khong cho web bat den flash (khong co constraint 'torch'), nen tren iOS
+ * nut nay chac chan bam khong an: an han di cho do vuong mat, thay vi bam vao
+ * lai hien bao loi nhu truoc.
+ * Android: nhieu may chi bao co torch sau khi camera chay on dinh vai tram ms
+ * -> van hien nut roi do lai (probeTorch) thay vi an nham tren may co den that.
  */
 function showTorchButton() {
+  if (isIOS()) { $("btn-torch").classList.add("hidden"); return; }
   $("btn-torch").classList.remove("hidden");
   probeTorch(0);
   probeTorch(700);
@@ -1212,9 +1432,10 @@ function toggleTorch() {
       $("btn-torch").classList.remove("unsupported");
     })
     .catch(function () {
+      // May nay khong bat duoc den tu trinh duyet -> an nut luon, bao 1 lan duy nhat.
       state.torchSupported = false;
-      $("btn-torch").classList.add("unsupported");
-      showWarn("Máy này không bật được đèn flash từ trình duyệt (thường gặp ở iPhone/Safari) — dùng đèn pin rời hoặc kéo thùng ra chỗ sáng.");
+      $("btn-torch").classList.add("hidden");
+      showWarn("Máy này không bật được đèn flash từ trình duyệt — dùng đèn pin rời hoặc kéo thùng ra chỗ sáng.");
     });
 }
 
@@ -1548,6 +1769,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (e.key === "Enter") { e.preventDefault(); addSerialManual(); }
   });
   $("btn-dup-skip").addEventListener("click", function () { closeDup(false); });
+  $("btn-close-dup").addEventListener("click", function () { closeDup(false); });
   $("btn-dup-force").addEventListener("click", function () { closeDup(true); });
   $("btn-tonkho").addEventListener("click", showTonKho);
 
@@ -1963,6 +2185,7 @@ state.modelBack = "";      // man hinh quay ve sau khi chon xong
 document.addEventListener("DOMContentLoaded", function () {
   $("btn-chon-may").addEventListener("click", openHang);
   $("btn-close-hang").addEventListener("click", closeChonMay);
+  $("btn-close-model").addEventListener("click", closeChonMay);
   $("btn-back-hang").addEventListener("click", openHang);
   $("inp-hang-search").addEventListener("input", function () { renderHangGrid(this.value); });
   $("inp-model-search").addEventListener("input", function () { renderModelList(this.value); });
