@@ -193,12 +193,50 @@ input[type=text]:focus { outline: 2px solid var(--c-nhap); border-color: transpa
   display: block !important;
   width: 100% !important;
   height: auto !important;
-  max-height: 46dvh;
+  /* camera vua du ngam: chua het man hinh thi danh sach vua quet bi day xuong duoi,
+   * phai cuon moi thay -> kho doi chieu. */
+  max-height: 26dvh;
   object-fit: cover;
   background: #000;
 }
 #reader img { display: none; }        /* anh placeholder cua thu vien */
 #reader > div:first-child { border: none !important; }
+
+/* thanh phong to: tem serial nho, phong to de doc duoc ma khong phai rê may sat thung */
+.zoom-slider {
+  position: absolute; left: 10px; right: 74px; bottom: 12px; z-index: 5;
+  width: auto; height: 30px; margin: 0;
+  accent-color: var(--accent);
+  background: rgba(11, 15, 20, .55); border-radius: 15px; padding: 0 10px;
+}
+
+/* mo khi chua bam QUET — nhin la biet dang khong ghi gi */
+.cam-idle {
+  position: absolute; inset: 0; z-index: 4;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(11, 15, 20, .55); color: #fff; font-size: 15px;
+  backdrop-filter: blur(1.5px);
+}
+.cam-idle b { margin: 0 5px; }
+
+/* nut QUET to, ngon cai voi toi — khong quet lien tuc tu dong nua */
+.arm-bar { display: flex; gap: 8px; }
+.btn-arm {
+  flex: 1 1 auto; padding: 15px 8px; border-radius: 14px;
+  font-size: 19px; font-weight: 800; letter-spacing: .3px;
+  background: var(--accent); color: var(--on-accent);
+  border: none; box-shadow: 0 6px 18px var(--accent-dim);
+}
+.btn-arm:active { transform: scale(.98); }
+.btn-arm.armed {
+  background: var(--card); color: var(--text);
+  border: 2px solid var(--accent); box-shadow: none;
+}
+.btn-scanmode {
+  flex: 0 0 auto; width: 116px; padding: 8px 6px; border-radius: 14px;
+  font-size: 13px; font-weight: 700; line-height: 1.25;
+  background: var(--card); color: var(--text); border: 1px solid var(--border);
+}
 
 /* bao loi / huong dan khi camera khong len hinh */
 .cam-status {
@@ -221,7 +259,7 @@ input[type=text]:focus { outline: 2px solid var(--c-nhap); border-color: transpa
 
 /* the ket qua quet gan nhat */
 .result {
-  padding: 13px 14px; border-radius: var(--radius);
+  padding: 9px 12px; border-radius: var(--radius);
   background: linear-gradient(180deg, var(--card2), var(--card));
   border: 1px solid var(--border);
   border-left: 6px solid var(--accent);
@@ -254,7 +292,7 @@ input[type=text]:focus { outline: 2px solid var(--c-nhap); border-color: transpa
 .sync-ok { color: var(--c-nhap); font-weight: 700; }
 .sync-pending { color: var(--c-xuat); font-weight: 700; }
 
-#recent-list { flex: 1 1 0; overflow-y: auto; min-height: 40px; }
+#recent-list { flex: 1 1 0; overflow-y: auto; min-height: 96px; }
 .recent-item {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 11px; margin-bottom: 5px;
@@ -270,7 +308,9 @@ input[type=text]:focus { outline: 2px solid var(--c-nhap); border-color: transpa
 .recent-ma .unk { color: var(--danger); }
 .recent-sync { flex-shrink: 0; font-size: 13px; }
 
+/* 3 nut phu: nen gon lai, nhuong cho cho danh sach vua quet */
 .toolbar { display: flex; gap: 8px; padding-bottom: calc(4px + env(safe-area-inset-bottom)); }
+.toolbar .btn-tool { padding: 9px 4px; font-size: 13px; }
 .btn-tool {
   flex: 1; padding: 12px 4px; font-size: 14px; font-weight: 600; border-radius: 12px;
   background: var(--card); color: var(--text); border: 1px solid var(--border);
@@ -608,17 +648,19 @@ body.serial-on #reader-wrap {
     <div id="reader-wrap">
       <div id="reader"></div>
       <button id="btn-torch" class="torch-fab hidden" type="button" title="Đèn flash (chỗ tối)">🔦</button>
+      <input id="inp-zoom" class="zoom-slider hidden" type="range" min="1" max="5" step="0.1" value="1"
+             title="Phóng to — tem nhỏ khỏi phải rê máy lại gần">
+      <div id="cam-idle" class="cam-idle hidden">Chạm <b>▶ QUÉT</b> ở dưới để bắt đầu</div>
       <div id="cam-status" class="cam-status hidden">
         <p id="cam-msg"></p>
         <button id="btn-cam-retry" type="button" class="btn-tool">↻ Bật lại camera</button>
       </div>
     </div>
 
-    <!-- go tay khi tem serial mo / khong quet duoc -->
-    <div id="serial-manual" class="serial-manual hidden">
-      <input id="inp-serial" type="text" inputmode="latin" autocapitalize="characters"
-             autocomplete="off" placeholder="Gõ số serial rồi Enter...">
-      <button id="btn-serial-add" class="btn-tool">+ Thêm</button>
+    <!-- nut quet: khong quet lien tuc tu dong nua -> khong bi ghi trung -->
+    <div class="arm-bar">
+      <button id="btn-arm" class="btn-arm" type="button">▶ QUÉT</button>
+      <button id="btn-scanmode" class="btn-scanmode" type="button" title="Đổi kiểu quét">1️⃣ Từng cái</button>
     </div>
 
     <!-- ket qua quet gan nhat -->
@@ -638,6 +680,13 @@ body.serial-on #reader-wrap {
       <span id="mapping-status" class="muted"></span>
     </div>
     <div id="recent-list"></div>
+
+    <!-- go tay khi tem serial mo / khong quet duoc -->
+    <div id="serial-manual" class="serial-manual hidden">
+      <input id="inp-serial" type="text" inputmode="latin" autocapitalize="characters"
+             autocomplete="off" placeholder="Gõ số serial rồi Enter...">
+      <button id="btn-serial-add" class="btn-tool">+ Thêm</button>
+    </div>
 
     <div class="toolbar">
       <button id="btn-refresh-mapping" class="btn-tool">↻ Mapping</button>
@@ -981,7 +1030,7 @@ var LS = {
   nguoi: "qk_nguoi", session: "qk_session", chedo: "qk_chedo",
   thietbi: "qk_thietbi", mappingAdd: "qk_mapping_add", mappingTime: "qk_mapping_time",
   queue: "qk_queue", recent: "qk_recent", counter: "qk_counter_",
-  theme: "qk_theme"
+  theme: "qk_theme", scanOnce: "qk_scan_once"
 };
 
 var MODE_LABEL = { NHAP: "NHẬP", XUAT: "XUẤT", KIEMKE: "KIỂM KÊ" };
@@ -995,6 +1044,8 @@ var state = {
   lastScan: { code: "", time: 0 },  // chong quet trung 3s
   busyUntil: 0,           // nghi 1.5s sau moi lan quet
   unknownCode: null,      // dang xu ly ma la
+  armed: false,           // da bam nut QUET chua (chua bam thi khong ghi gi)
+  scanOnce: true,         // true = bam 1 lan an 1 ma; false = quet lien tuc
   torchOn: false,
   torchSupported: false,
   theme: "auto",          // auto | dark | light
@@ -1069,6 +1120,9 @@ document.addEventListener("DOMContentLoaded", function () {
   $("btn-torch").addEventListener("click", toggleTorch);
   $("btn-cam-retry").addEventListener("click", restartScanner);
   $("btn-close-unknown").addEventListener("click", skipUnknown);
+  $("btn-arm").addEventListener("click", function () { setArmed(!state.armed); });
+  $("btn-scanmode").addEventListener("click", function () { setScanOnce(!state.scanOnce); });
+  setScanOnce(localStorage.getItem(LS.scanOnce) !== "0", true);
   $("btn-refresh-mapping").addEventListener("click", function () { loadMapping(true); });
   $("btn-summary").addEventListener("click", showSummary);
   $("btn-close-summary").addEventListener("click", function () {
@@ -1327,18 +1381,21 @@ function startScanner() {
   //   iOS  : bo han qrbox, quet toan khung hinh — khong con lop che nao de hong.
   //   Khac : qrbox tinh theo khung hinh that, khong dat cung 280x160 (man nho se
   //          bi khung lon hon video -> thu vien bao loi va khong ve gi).
-  var cfg = isIOS() ? { fps: 10 } : {
-    fps: 10,
-    qrbox: function (w, h) {
-      var bw = Math.floor(Math.min(w * 0.9, 320));
-      var bh = Math.floor(Math.min(h * 0.7, 200));
-      return { width: bw, height: bh };
+  var mkCfg = function (deviceId) {
+    var cfg = { fps: 10, videoConstraints: videoConstraints(deviceId) };
+    if (!isIOS()) {
+      cfg.qrbox = function (w, h) {
+        var bw = Math.floor(Math.min(w * 0.9, 320));
+        var bh = Math.floor(Math.min(h * 0.7, 200));
+        return { width: bw, height: bh };
+      };
     }
+    return cfg;
   };
 
   var onErr = function () { /* khong match frame nay — im lang */ };
 
-  state.scanner.start({ facingMode: "environment" }, cfg, onScan, onErr)
+  state.scanner.start({ facingMode: "environment" }, mkCfg(), onScan, onErr)
     .then(afterStart)
     .catch(function (e1) {
       // Fallback: vai may (nhat la iPhone cu) tu choi facingMode -> chon camera sau theo deviceId
@@ -1347,7 +1404,7 @@ function startScanner() {
         var back = cams.filter(function (c) {
           return /back|rear|sau|environment/i.test(c.label || "");
         })[0] || cams[cams.length - 1];
-        return state.scanner.start(back.id, cfg, onScan, onErr).then(afterStart);
+        return state.scanner.start(back.id, mkCfg(back.id), onScan, onErr).then(afterStart);
       }).catch(function (e2) {
         state.scanner = null;
         camStatus("Không mở được camera: " + (e2 && e2.message ? e2.message : e2) +
@@ -1361,6 +1418,13 @@ function afterStart() {
   hardenVideo();
   watchVideo();
   showTorchButton();
+  setArmed(false);                        // mo camera ra o che do ngam, chua ghi gi
+  setTimeout(setupZoom, 800);             // doi track chay on dinh moi doc duoc kha nang zoom
+  var wrap = $("reader-wrap");
+  wrap.onclick = function (e) {           // cham vao khung hinh = lay net lai
+    if (e.target.id === "inp-zoom" || e.target.id === "btn-torch") return;
+    refocus();
+  };
 }
 
 /* Bat lai camera khi bam nut ↻ (hoac quay lai app sau khi bi treo). */
@@ -1439,6 +1503,81 @@ function toggleTorch() {
     });
 }
 
+/* ==================== NUT QUET (chong ghi trung) ====================
+ * Truoc: camera thay ma la ghi luon -> thung con truoc ong kinh, quay nguoi, ma
+ * nam trong khung lan nua la ghi them 1 dong.
+ * Gio: phai bam QUET moi an. 2 kieu:
+ *   "1 Tung cai"  (mac dinh) — bam 1 lan an 1 ma roi tu tat. Chac an nhat.
+ *   "Lien tuc"    — bam 1 lan quet ca loat (nhap nguyen lo cung loai), bam lai de dung.
+ */
+function setArmed(on) {
+  state.armed = !!on;
+  var b = $("btn-arm");
+  b.classList.toggle("armed", state.armed);
+  b.textContent = state.armed
+    ? (state.scanOnce ? "◉ ĐANG NGẮM — chạm để huỷ" : "⏸ DỪNG QUÉT")
+    : "▶ QUÉT";
+  $("cam-idle").classList.toggle("hidden", state.armed);
+  if (state.armed) refocus();
+}
+
+function setScanOnce(once, silent) {
+  state.scanOnce = !!once;
+  localStorage.setItem(LS.scanOnce, state.scanOnce ? "1" : "0");
+  $("btn-scanmode").textContent = state.scanOnce ? "1️⃣ Từng cái" : "🔁 Liên tục";
+  setArmed(false);
+  if (!silent && navigator.vibrate) navigator.vibrate(20);
+}
+
+/* ==================== LAY NET ====================
+ * Tem serial in nho, camera dien thoai hay "bo net" khi dua sat. Xu ly 3 huong:
+ *   - xin do phan giai cao (1920) -> chu nho van du net de doc
+ *   - bat lay net lien tuc (focusMode continuous) tren may nao ho tro
+ *   - cho phong to bang thanh truot: dung xa 20-25cm (khoang camera de lay net)
+ *     roi keo zoom, thay vi dua sat 5cm cho camera lien tuc do net.
+ */
+/* Luu y: html5-qrcode chi cho tham so DAU cua start() dung 1 key ('facingMode'
+ * hoac 'deviceId'), truyen ca cum width/advanced vao do la no nem loi va camera
+ * khong mo duoc. Muon xin do phan giai + lay net phai di duong 'videoConstraints'
+ * trong config (tham so thu 2) — luc do tham so dau bi bo qua. */
+function videoConstraints(deviceId) {
+  var vc = {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    advanced: [{ focusMode: "continuous" }]
+  };
+  if (deviceId) vc.deviceId = { exact: deviceId };
+  else vc.facingMode = "environment";
+  return vc;
+}
+
+function refocus() {
+  var track = getVideoTrack();
+  if (!track || !track.applyConstraints) return;
+  // "huc" mot cai cho camera lay net lai: chuyen sang single roi ve continuous
+  track.applyConstraints({ advanced: [{ focusMode: "single-shot" }] })
+    .then(function () {
+      return track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+    })
+    .catch(function () { /* iOS khong cho chinh focus — bo qua */ });
+}
+
+function setupZoom() {
+  var el = $("inp-zoom");
+  var track = getVideoTrack();
+  var caps = {};
+  try { caps = (track && track.getCapabilities) ? (track.getCapabilities() || {}) : {}; } catch (e) { }
+  if (!caps.zoom) { el.classList.add("hidden"); return; }   // iPhone/Safari thuong khong co
+  el.min = caps.zoom.min;
+  el.max = Math.min(caps.zoom.max, caps.zoom.min + 4);      // hon 4x thi mo, quet kem
+  el.step = caps.zoom.step || 0.1;
+  el.value = track.getSettings().zoom || caps.zoom.min;
+  el.classList.remove("hidden");
+  el.oninput = function () {
+    track.applyConstraints({ advanced: [{ zoom: Number(el.value) }] }).catch(function () { });
+  };
+}
+
 // ==================== XU LY 1 LAN QUET ====================
 // Vai thung (vd Midea) co 2 QR canh nhau: 1 la serial that, 1 la "Scan for Brand
 // Claim Info" chi dan toi trang web hang -> phai chan, khong duoc luu nham thanh serial/ma hang.
@@ -1446,6 +1585,7 @@ var URL_QR_RE = /^https?:\/\//i;
 
 function onScan(decodedText) {
   var now = Date.now();
+  if (!state.armed) return;                                  // chua bam nut QUET -> khong ghi gi
   if (now < state.busyUntil) return;                         // dang cooldown 1.5s
   if (state.unknownCode !== null) return;                    // dang o man hinh ma la
   if (state.pendingDup !== null) return;                     // dang o man hinh serial trung
@@ -1462,6 +1602,9 @@ function onScan(decodedText) {
   }
   state.lastScan = { code: code.toUpperCase(), time: now };
   state.busyUntil = now + COOLDOWN_MS;
+  // Kieu "tung cai": moi lan bam QUET chi an 1 ma roi tu tat -> khong the ghi trung
+  // vi thung con nam truoc ong kinh.
+  if (state.scanOnce) setArmed(false);
 
   // che do SERIAL: ma thung -> chon san pham, ma la -> coi la so serial
   if (state.serialOn) { handleSerialScan(code); return; }
