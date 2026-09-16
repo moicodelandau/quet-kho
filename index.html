@@ -796,7 +796,7 @@ body.serial-on #reader-wrap {
     <div id="summary-content">Đang tải...</div>
   </div>
 
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
   <script>
 // URL Web App cua Google Apps Script (sau khi Deploy — xem README buoc 3)
 // Dang: https://script.google.com/macros/s/AKfycb.../exec
@@ -1049,7 +1049,9 @@ var state = {
   torchOn: false,
   torchSupported: false,
   theme: "auto",          // auto | dark | light
-  scanner: null
+  scanner: null,          // ZXing.BrowserMultiFormatReader
+  stream: null,           // MediaStream dang mo (giu song de pause/resume khong xin lai quyen)
+  zxingControls: null     // { stop() } tra ve tu decodeFromStream, dung khi pause
 };
 
 var MAPPING_TTL_MS = 10 * 60 * 1000; // refresh mapping moi 10 phut
@@ -1323,12 +1325,12 @@ function isIOS() {
 
 function scanFormats() {
   return [
-    Html5QrcodeSupportedFormats.EAN_13,
-    Html5QrcodeSupportedFormats.EAN_8,
-    Html5QrcodeSupportedFormats.UPC_A,
-    Html5QrcodeSupportedFormats.CODE_128,
-    Html5QrcodeSupportedFormats.CODE_39,
-    Html5QrcodeSupportedFormats.QR_CODE
+    ZXing.BarcodeFormat.EAN_13,
+    ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.UPC_A,
+    ZXing.BarcodeFormat.CODE_128,
+    ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.QR_CODE
   ];
 }
 
@@ -1371,45 +1373,66 @@ function watchVideo() {
   });
 }
 
-function startScanner() {
-  if (state.scanner) return;
-  camStatus("Đang bật camera...");
-  state.scanner = new Html5Qrcode("reader", { formatsToSupport: scanFormats(), verbose: false });
+/* Goi lai moi lan ZXing thu decode 1 khung hinh. Da co ma -> onScan(); khong co
+ * (NotFoundException, rat thuong xuyen) -> im lang, dung nhu onErr cu cua html5-qrcode. */
+function zxingCallback(result) {
+  if (result) onScan(result.getText());
+}
 
-  // qrbox: thu vien ve 4 mieng che toi quanh khung ngam. Neu kich thuoc khung
-  // tinh sai (hay gap tren iOS) thi 4 mieng do phu kin -> dung la "o den".
-  //   iOS  : bo han qrbox, quet toan khung hinh — khong con lop che nao de hong.
-  //   Khac : qrbox tinh theo khung hinh that, khong dat cung 280x160 (man nho se
-  //          bi khung lon hon video -> thu vien bao loi va khong ve gi).
-  var mkCfg = function (deviceId) {
-    var cfg = { fps: 10, videoConstraints: videoConstraints(deviceId) };
-    if (!isIOS()) {
-      cfg.qrbox = function (w, h) {
-        var bw = Math.floor(Math.min(w * 0.9, 320));
-        var bh = Math.floor(Math.min(h * 0.7, 200));
-        return { width: bw, height: bh };
-      };
-    }
-    return cfg;
-  };
-
-  var onErr = function () { /* khong match frame nay — im lang */ };
-
-  state.scanner.start({ facingMode: "environment" }, mkCfg(), onScan, onErr)
-    .then(afterStart)
+function openCamera(constraints) {
+  return navigator.mediaDevices.getUserMedia({ video: constraints })
     .catch(function (e1) {
-      // Fallback: vai may (nhat la iPhone cu) tu choi facingMode -> chon camera sau theo deviceId
-      Html5Qrcode.getCameras().then(function (cams) {
-        if (!cams || !cams.length) throw e1;
+      // Fallback: vai may (nhat la iPhone cu) khong chiu facingMode -> chon camera sau theo deviceId
+      return navigator.mediaDevices.enumerateDevices().then(function (devices) {
+        var cams = devices.filter(function (d) { return d.kind === "videoinput"; });
+        if (!cams.length) throw e1;
         var back = cams.filter(function (c) {
           return /back|rear|sau|environment/i.test(c.label || "");
         })[0] || cams[cams.length - 1];
-        return state.scanner.start(back.id, mkCfg(back.id), onScan, onErr).then(afterStart);
-      }).catch(function (e2) {
-        state.scanner = null;
-        camStatus("Không mở được camera: " + (e2 && e2.message ? e2.message : e2) +
-          "\nKiểm tra: link phải là https://, và đã bấm Cho phép khi Safari hỏi quyền camera.");
+        return navigator.mediaDevices.getUserMedia({ video: videoConstraints(back.deviceId) });
       });
+    });
+}
+
+function startScanner() {
+  if (state.scanner) return;
+  camStatus("Đang bật camera...");
+
+  var reader = $("reader");
+  reader.innerHTML = "";
+  var video = document.createElement("video");
+  video.setAttribute("playsinline", "true");
+  video.setAttribute("webkit-playsinline", "true");
+  video.muted = true;
+  video.playsInline = true;
+  video.style.width = "100%";
+  video.style.height = "100%";
+  video.style.objectFit = "cover";
+  reader.appendChild(video);
+
+  // TRY_HARDER: quan trong nhat de doc duoc ma vach 1D (Code128/EAN) nho, in mo —
+  // cham hon 1 chut nhung dung la ly do camera "nhin thay nhung khong nhan ra ma".
+  var hints = new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, scanFormats());
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  state.scanner = new ZXing.BrowserMultiFormatReader(hints, 120);
+
+  openCamera(videoConstraints())
+    .then(function (stream) {
+      state.stream = stream;
+      video.srcObject = stream;
+      var p = video.play();
+      if (p && p.catch) p.catch(function () { });
+      return state.scanner.decodeFromStream(stream, video, zxingCallback);
+    })
+    .then(function (controls) {
+      state.zxingControls = controls;
+      afterStart();
+    })
+    .catch(function (e) {
+      state.scanner = null;
+      camStatus("Không mở được camera: " + (e && e.message ? e.message : e) +
+        "\nKiểm tra: link phải là https://, và đã bấm Cho phép khi trình duyệt hỏi quyền camera.");
     });
 }
 
@@ -1435,17 +1458,34 @@ function restartScanner() {
 
 function stopScanner() {
   if (!state.scanner) return;
-  var s = state.scanner; state.scanner = null; state.torchOn = false;
-  // html5-qrcode nem loi DONG BO khi camera chua chay -> phai bao try, .catch() khong du
-  try { var p = s.stop(); if (p && p.catch) p.catch(function () { }); } catch (e) { }
-  try { s.clear(); } catch (e) { }   // xoa <video> cu, tranh chong 2 khung khi bat lai
+  state.scanner = null; state.torchOn = false;
+  try { state.zxingControls && state.zxingControls.stop(); } catch (e) { }
+  state.zxingControls = null;
+  try { state.stream && state.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { }
+  state.stream = null;
+  var reader = $("reader");
+  if (reader) reader.innerHTML = "";   // xoa <video> cu, tranh chong 2 khung khi bat lai
   camStatus("");
   $("btn-torch").classList.add("hidden");
   $("btn-torch").classList.remove("active");
 }
 
-function pauseScanner() { try { state.scanner && state.scanner.pause(true); } catch (e) { } }
-function resumeScanner() { try { state.scanner && state.scanner.resume(); } catch (e) { } }
+/* Pause/resume chi tat/bat vong lap decode, KHONG dong stream — resume lai
+ * gan nhu tuc thi, khong xin lai quyen camera moi lan mo man hinh phu (ma la,
+ * chon phieu, tong ket...). Chi stopScanner() (doi trang/khoi dong lai) moi
+ * that su tha camera. */
+function pauseScanner() {
+  try { state.zxingControls && state.zxingControls.stop(); } catch (e) { }
+  state.zxingControls = null;
+}
+function resumeScanner() {
+  if (!state.scanner || !state.stream) return;
+  var video = document.querySelector("#reader video");
+  if (!video) return;
+  state.scanner.decodeFromStream(state.stream, video, zxingCallback)
+    .then(function (controls) { state.zxingControls = controls; })
+    .catch(function () { });
+}
 
 // ---- Den flash (cho toi) ----
 function getVideoTrack() {
