@@ -63,6 +63,28 @@ button { font: inherit; color: inherit; }
 .canvas-wrap { position: relative; background: var(--stage); }
 #view { display: block; width: 100%; height: auto; touch-action: pan-y; cursor: default; }
 #view3d { display: block; width: 100%; aspect-ratio: 16 / 10; height: auto; touch-action: none; cursor: grab; }
+/* cảnh báo, đồ thị nhiều chế độ, đánh giá kỹ thuật */
+.alarms { display: flex; flex-direction: column; gap: 8px; }
+.alarms:empty { display: none; }
+.alarm { border: 1px solid currentColor; border-radius: 8px; padding: 9px 12px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; background: color-mix(in srgb, currentColor 9%, var(--surface)); }
+.alarm b { font-weight: 700; }
+.alarm span { color: var(--ink); font-size: 13px; }
+.alarm.warn { color: var(--warn); } .alarm.bad { color: var(--bad); } .alarm.crit { color: var(--bad); border-width: 2px; }
+.alarm.crit b { text-transform: uppercase; letter-spacing: .04em; }
+.keys { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 4px; }
+.keys .key { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+.keys .key i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+.eng { padding: 12px 14px 14px; }
+.eng h3 { margin-bottom: 8px; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+.eng .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.eng table { min-width: 0; font-size: 13px; }
+.eng td, .eng th { padding: 5px 6px; }
+.eng td:first-child { min-width: 0; font-family: var(--font); }
+.eng .verdict { font-weight: 650; font-size: 15px; margin-bottom: 6px; }
+.eng ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.eng li.bad { color: var(--bad); } .eng li.warn { color: var(--warn); } .eng li.good { color: var(--good); }
+.eng li span { color: var(--ink); }
+.eng .bar2 { height: 6px; border-radius: 3px; background: var(--accent); display: inline-block; vertical-align: middle; }
 #view[hidden], #view3d[hidden], .cap3d[hidden], .probe[hidden] { display: none; }
 #view3d:active { cursor: grabbing; }
 .cap3d { padding: 6px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); background: var(--surface); }
@@ -195,29 +217,39 @@ td.pending { color: var(--muted); }
           <span class="lbl">Lớp hiển thị</span>
           <div class="seg" id="seg-layer" role="group" aria-label="Lớp hiển thị"></div>
           <label class="check" style="align-items:center"><input type="checkbox" id="chk-trails" checked> Vệt gió</label>
+          <label class="check" style="align-items:center"><input type="checkbox" id="chk-beep"> Âm báo CO₂</label>
         </div>
       </div>
 
+      <div class="alarms" id="alarms" role="status" aria-live="polite"></div>
       <div class="metrics" id="metrics" aria-live="off"></div>
 
       <div class="view-card chart-card">
-        <h3>Nhiệt độ theo thời gian
-          <span class="key"><i style="background:var(--accent)"></i>Tại người</span>
-          <span class="key"><i style="background:var(--muted)"></i>Cả vùng sinh hoạt</span>
-          <span class="key"><i style="background:var(--good)"></i>Mục tiêu</span>
+        <h3><span id="chart-title">Nhiệt độ theo thời gian</span>
+          <span class="seg" id="seg-chart" role="group" aria-label="Loại đồ thị" style="margin-left:auto"></span>
         </h3>
-        <canvas id="chart" role="img" aria-label="Đồ thị nhiệt độ theo thời gian"></canvas>
+        <div class="keys" id="chart-keys"></div>
+        <canvas id="chart" role="img" aria-label="Đồ thị theo thời gian"></canvas>
+      </div>
+
+      <div class="view-card eng" id="eng-card">
+        <h3>Đánh giá kỹ thuật <span class="note" style="text-transform:none;letter-spacing:0;font-weight:400">ước lượng sơ bộ, cập nhật theo bố trí hiện tại</span></h3>
+        <div id="eng"></div>
       </div>
     </section>
 
     <aside class="controls" aria-label="Bố trí phòng">
       <details class="panel" open>
-        <summary><h3>Kích thước phòng</h3></summary>
+        <summary><h3>Phòng và vỏ nhà</h3></summary>
         <div class="body">
           <div class="field"><div class="row"><label for="rng-roomW">Chiều rộng (trái sang phải)</label><span class="val" id="val-roomW"></span></div><input type="range" id="rng-roomW" min="3.6" max="7.2" step="0.2"></div>
           <div class="field"><div class="row"><label for="rng-roomH">Chiều cao trần</label><span class="val" id="val-roomH"></span></div><input type="range" id="rng-roomH" min="2.4" max="3.6" step="0.1"></div>
           <div class="field"><div class="row"><label for="rng-depth">Chiều sâu (vào trong màn hình)</label><span class="val" id="val-depth"></span></div><input type="range" id="rng-depth" min="3" max="7" step="0.5"></div>
           <p class="note" id="room-info"></p>
+          <div class="field"><div class="row"><span>Nắng chiếu vào mái và tường</span></div><div class="seg" id="seg-sun" role="group" aria-label="Mức nắng"></div></div>
+          <div class="field"><div class="row"><span>Tường hướng nắng</span></div><div class="seg" id="seg-sunside" role="group" aria-label="Tường hướng nắng"></div></div>
+          <div class="field"><div class="row"><span>Cách nhiệt vỏ nhà</span></div><div class="seg" id="seg-env" role="group" aria-label="Cách nhiệt"></div></div>
+          <p class="note" id="surf-info"></p>
         </div>
       </details>
 
@@ -240,60 +272,61 @@ td.pending { color: var(--muted); }
           </div>
           <div class="field">
             <div class="row"><label for="sel-cap">Tổng công suất lạnh</label></div>
-            <select id="sel-cap">
-              <option value="2640">9.000 BTU (2,6 kW)</option>
-              <option value="3520" selected>12.000 BTU (3,5 kW)</option>
-              <option value="5280">18.000 BTU (5,3 kW)</option>
-            </select>
-            <span class="note">Nếu bật hai dàn thì công suất chia đều, để so sánh công bằng.</span>
+            <select id="sel-cap"></select>
+            <span class="note">1 HP quy đổi gần đúng 9.000 BTU/h. Kiểm tra catalogue của hãng khi chọn máy thật. Nếu bật hai dàn thì công suất chia đều, để so sánh công bằng. Dàn càng lớn thì cửa gió ra càng rộng và lưu lượng càng cao.</span>
           </div>
         </div>
       </details>
 
       <details class="panel" open>
-        <summary><h3>Quạt</h3></summary>
+        <summary><h3>Quạt và thông gió cơ khí</h3></summary>
         <div class="body">
           <div class="chips">
             <button class="btn small" type="button" data-add="stand">+ Quạt đứng</button>
             <button class="btn small" type="button" data-add="ceiling">+ Quạt trần</button>
             <button class="btn small" type="button" data-add="exhaust">+ Quạt hút</button>
+            <button class="btn small" type="button" data-add="hrv">+ Gió tươi thu hồi nhiệt</button>
           </div>
           <div id="fan-list" style="display:flex;flex-direction:column;gap:10px"></div>
-          <p class="note" id="fan-empty">Chưa có quạt nào. Kéo quạt trực tiếp trên hình để đổi chỗ.</p>
+          <p class="note" id="fan-empty">Chưa có quạt nào. Kéo quạt trực tiếp trên hình 2D hoặc 3D để đổi chỗ.</p>
+        </div>
+      </details>
+
+      <details class="panel" open>
+        <summary><h3>Cửa và lỗ thông khí</h3></summary>
+        <div class="body">
+          <div id="open-list" style="display:flex;flex-direction:column;gap:10px"></div>
+          <p class="note">Quạt hút chỉ có tác dụng khi có ít nhất một lỗ mở để bù gió. Gió bù lấy từ ngoài trời nên mang theo nhiệt và hơi ẩm. Lỗ trên mái giúp khí nóng thoát lên cao.</p>
+        </div>
+      </details>
+
+      <details class="panel" open>
+        <summary><h3>Người trong phòng</h3></summary>
+        <div class="body">
+          <div class="chips"><button class="btn small" type="button" id="p-plus">+ Thêm người</button><span class="note" id="p-count" style="align-self:center"></span></div>
+          <div id="people-list" style="display:flex;flex-direction:column;gap:8px"></div>
+          <p class="note">Mỗi người tỏa nhiệt, hơi ẩm và CO₂ theo mức hoạt động. Tối đa 8 người. Kéo người trên hình để đổi chỗ.</p>
         </div>
       </details>
 
       <details class="panel">
-        <summary><h3>Cửa và thông gió</h3></summary>
+        <summary><h3>Thiết bị trong phòng</h3></summary>
         <div class="body">
-          <label class="check"><input type="checkbox" data-open="winL"> Cửa sổ tường trái (cao 1,0 đến 1,9 m)</label>
-          <label class="check"><input type="checkbox" data-open="ventR"> Ô thoáng tường phải (cao 2,1 đến 2,6 m)</label>
-          <label class="check"><input type="checkbox" data-open="doorR"> Khe cửa ra vào, sát sàn (cao 0 đến 0,5 m)</label>
-          <p class="note">Quạt hút chỉ có tác dụng khi có ít nhất một cửa mở để bù gió. Gió bù lấy từ ngoài trời nên mang theo nhiệt.</p>
+          <div class="chips" id="dev-add"></div>
+          <div id="dev-list" style="display:flex;flex-direction:column;gap:10px"></div>
+          <p class="note" id="dev-empty">Chưa có thiết bị tỏa nhiệt. Công suất là mức tỏa nhiệt ước tính, chỉnh lại theo thiết bị thật.</p>
         </div>
       </details>
 
       <details class="panel">
-        <summary><h3>Người và thời tiết</h3></summary>
+        <summary><h3>Thời tiết và điều kiện ban đầu</h3></summary>
         <div class="body">
-          <div class="field">
-            <div class="row"><span>Số người trong phòng</span>
-              <span class="stepper"><button class="btn small" type="button" id="p-minus" aria-label="Bớt một người">−</button><b id="p-count">2</b><button class="btn small" type="button" id="p-plus" aria-label="Thêm một người">+</button></span>
-            </div>
-            <span class="note">Mỗi người tỏa 100 W và thải CO₂. Kéo người trên hình để đổi chỗ ngồi.</span>
-          </div>
-          <div class="field">
-            <div class="row"><span>Nhiệt độ ngoài trời</span><span class="val" id="val-tOut"></span></div>
-            <input type="range" id="rng-tOut" min="26" max="38" step="1">
-          </div>
-          <div class="field">
-            <div class="row"><span>Nhiệt độ phòng lúc bắt đầu</span><span class="val" id="val-tStart"></span></div>
-            <input type="range" id="rng-tStart" min="28" max="36" step="1">
-          </div>
-          <div class="field">
-            <div class="row"><span>Mục tiêu tại người</span><span class="val" id="val-target"></span></div>
-            <input type="range" id="rng-target" min="23" max="29" step="1">
-          </div>
+          <div class="field"><div class="row"><label for="rng-tOut">Nhiệt độ ngoài trời</label><span class="val" id="val-tOut"></span></div><input type="range" id="rng-tOut" min="24" max="40" step="1"></div>
+          <div class="field"><div class="row"><label for="rng-rhOut">Độ ẩm ngoài trời</label><span class="val" id="val-rhOut"></span></div><input type="range" id="rng-rhOut" min="30" max="100" step="5"></div>
+          <div class="field"><div class="row"><label for="rng-tStart">Nhiệt độ phòng lúc bắt đầu</label><span class="val" id="val-tStart"></span></div><input type="range" id="rng-tStart" min="26" max="38" step="1"></div>
+          <div class="field"><div class="row"><label for="rng-rhStart">Độ ẩm phòng lúc bắt đầu</label><span class="val" id="val-rhStart"></span></div><input type="range" id="rng-rhStart" min="30" max="100" step="5"></div>
+          <div class="field"><div class="row"><label for="rng-cStart">CO₂ phòng lúc bắt đầu</label><span class="val" id="val-cStart"></span></div><input type="range" id="rng-cStart" min="420" max="6000" step="20"></div>
+          <div class="field"><div class="row"><label for="rng-target">Mục tiêu nhiệt độ tại người</label><span class="val" id="val-target"></span></div><input type="range" id="rng-target" min="23" max="29" step="1"></div>
         </div>
       </details>
     </aside>
@@ -319,8 +352,10 @@ td.pending { color: var(--muted); }
           <th>Đạt mục tiêu (phút)</th>
           <th>T tại người sau 10 phút</th>
           <th>T tại người sau 20 phút</th>
+          <th>Độ ẩm RH (%)</th>
           <th>Gió lên người (m/s)</th>
           <th>CO₂ tại người (ppm)</th>
+          <th>Ngột ngạt (0 đến 100)</th>
           <th>Chênh nhiệt σ (°C)</th>
           <th>Khí ngoài vào (lần/giờ)</th>
         </tr></thead>
@@ -331,7 +366,7 @@ td.pending { color: var(--muted); }
 
   <footer class="foot">
     <p>Đây là mô hình định tính trên mặt cắt 2D (60 ô theo chiều rộng phòng, dòng chảy không nén được, nổi do chênh nhiệt). Dòng gió bám trần, cánh quạt quay, quạt quay đầu và luồng theo chiều sâu phòng không được mô phỏng. Công suất lạnh và nhiệt người được quy đổi theo chiều sâu bạn chọn. Cửa trong mô hình mở suốt chiều sâu phòng nên lượng khí ngoài vào bị ước cao hơn thực tế. Chế độ 3D là mặt cắt được kéo dài theo chiều sâu, chưa phải mô phỏng 3D thật. Dùng kết quả để so sánh tương đối giữa các cách bố trí, không phải số đo thật.</p>
-    <p>Nhãn gió lên người (dưới 0,2 m/s là êm, trên 0,5 m/s dễ bị lùa) và nhãn CO₂ (dưới 800 ppm tốt, trên 1.200 ppm ngột) là mốc tham khảo thông dụng, không phải quy chuẩn.</p>
+    <p>Mốc cảnh báo CO₂: 1.000 ppm là ngưỡng khuyến nghị thông gió thường dùng; 2.000 ppm trở lên thường gây buồn ngủ, đau đầu; 5.000 ppm là giới hạn tiếp xúc nghề nghiệp 8 giờ (OSHA); 30.000 ppm là giới hạn 15 phút (NIOSH). Độ ẩm khó chịu dùng chỉ số humidex của Canada. Chỉ số ngột ngạt là công thức kinh nghiệm: 50% CO₂ (800 đến 2.000 ppm), 30% nóng ẩm (humidex 28 đến 40), 20% khí tù đọng khi trời nóng. Nhãn gió lên người (dưới 0,2 m/s là êm, trên 0,5 m/s dễ bị lùa) cũng là mốc tham khảo. Phần đánh giá kỹ thuật dùng giả định đơn giản, không thay thế tính tải lạnh chính thức theo TCVN hoặc ASHRAE.</p>
   </footer>
 </div>
 

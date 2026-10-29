@@ -59,6 +59,11 @@
       cfg: function (b) { return make(function (c) { off(c, 'wallL'); ac(c, 'floorL', { angle: 55 }); }, b); }
     },
     {
+      id: 'hrv', name: 'Treo tường + gió tươi thu hồi nhiệt',
+      desc: 'Máy gió tươi 4 lần/giờ, thu hồi 60% nhiệt từ khí thải. Có đủ gió sạch mà ít tốn lạnh hơn mở cửa.',
+      cfg: function (b) { return make(function (c) { fan(c, { kind: 'hrv', side: 'L', y: 0.5, ach: 4, eta: 0.6 }); }, b); }
+    },
+    {
       id: 'vent', name: 'Treo tường + quạt hút và hé cửa',
       desc: 'Thêm quạt hút ở tường phải, hé cửa sổ bên trái và khe cửa để bù gió. Phòng thoáng hơn nhưng hút nhiệt từ ngoài vào.',
       cfg: function (b) { return make(function (c) {
