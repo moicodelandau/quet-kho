@@ -1,0 +1,1436 @@
+<title>Mô phỏng luồng gió</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@85..100,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Bố cục: sân khấu mô phỏng bên trái (mặt cắt phòng + chỉ số + đồ thị), bảng điều khiển bên phải; phương án so sánh nằm bên dưới. */
+:root {
+  --bg: #e9eff2;          /* nền trang, xám xanh lạnh */
+  --surface: #ffffff;
+  --stage: #f4f7f8;       /* nền khung phòng */
+  --ink: #0e1d26;
+  --muted: #566a76;
+  --line: #cfdae0;
+  --accent: #0a6e8f;      /* xanh lam dụng cụ đo */
+  --accent-ink: #ffffff;
+  --accent-soft: #d8ecf3;
+  --good: #1b7f52;
+  --warn: #b86e0b;
+  --bad: #b8372b;
+  --shadow: 0 1px 0 rgba(14,29,38,.04), 0 6px 20px -12px rgba(14,29,38,.25);
+  --font: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b141a; --surface: #12202a; --stage: #0f1b23; --ink: #e5eef2; --muted: #8ea2ae; --line: #25363f;
+    --accent: #4cc3e8; --accent-ink: #06222c; --accent-soft: #15333f; --good: #4cc790; --warn: #e3a54a; --bad: #ee7d6f;
+    --shadow: 0 1px 0 rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b141a; --surface: #12202a; --stage: #0f1b23; --ink: #e5eef2; --muted: #8ea2ae; --line: #25363f;
+  --accent: #4cc3e8; --accent-ink: #06222c; --accent-soft: #15333f; --good: #4cc790; --warn: #e3a54a; --bad: #ee7d6f;
+  --shadow: 0 1px 0 rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 14px; line-height: 1.45; }
+.page {
+  max-width: 1280px; margin: 0 auto;
+  padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 20px;
+}
+h1, h2, h3 { margin: 0; text-wrap: balance; font-weight: 650; letter-spacing: -.01em; }
+h1 { font-size: clamp(22px, 3.2vw, 30px); font-stretch: 88%; }
+h2 { font-size: 18px; font-stretch: 92%; }
+h3 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 70ch; margin-top: 6px; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
+@media (max-width: 960px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+.stage, .controls, .compare { min-width: 0; }
+.stage { display: flex; flex-direction: column; gap: 12px; }
+
+.view-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; }
+.canvas-wrap { position: relative; background: var(--stage); }
+#view { display: block; width: 100%; height: auto; touch-action: pan-y; cursor: default; }
+#view.grab { cursor: grab; } #view.grabbing { cursor: grabbing; }
+.clock {
+  position: absolute; left: 10px; top: 8px; font-family: var(--mono); font-size: 12px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.probe {
+  position: absolute; right: 10px; top: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px;
+  font-variant-numeric: tabular-nums; min-width: 0; max-width: 60%;
+}
+.legend { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.legend .bar { flex: 1 1 160px; height: 10px; border-radius: 3px; min-width: 120px; border: 1px solid var(--line); }
+.legend .ticks { position: relative; height: 14px; font-family: var(--mono); font-size: 11px; flex: 1 1 100%; }
+.legend .ticks span { position: absolute; transform: translateX(-50%); }
+.transport { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); }
+.btn {
+  appearance: none; border: 1px solid var(--line); background: var(--surface); border-radius: 7px; padding: 6px 12px; cursor: pointer; line-height: 1.2; min-height: 34px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+.btn.small { padding: 3px 9px; min-height: 28px; font-size: 12.5px; }
+.btn.danger:hover { border-color: var(--bad); color: var(--bad); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--surface); }
+.seg button { appearance: none; border: 0; background: transparent; padding: 6px 10px; cursor: pointer; min-height: 32px; border-right: 1px solid var(--line); font-size: 13px; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.lbl { font-size: 12px; color: var(--muted); margin-right: -6px; }
+
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tile .k { font-size: 12px; color: var(--muted); }
+.tile .v { font-family: var(--mono); font-size: 22px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.tile .v small { font-size: 12px; color: var(--muted); margin-left: 3px; letter-spacing: 0; }
+.tile .s { font-size: 12px; color: var(--muted); min-height: 1.4em; }
+.pill { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 99px; border: 1px solid currentColor; }
+.pill.good { color: var(--good); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); } .pill.idle { color: var(--muted); }
+
+.chart-card { padding: 10px 12px 6px; }
+.chart-card h3 { margin-bottom: 4px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.chart-card h3 .key { display: inline-flex; align-items: center; gap: 5px; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px; }
+.chart-card h3 .key i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+#chart { width: 100%; height: 150px; display: block; }
+
+.controls { display: flex; flex-direction: column; gap: 10px; }
+details.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+details.panel > summary { list-style: none; cursor: pointer; padding: 11px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+details.panel > summary::-webkit-details-marker { display: none; }
+details.panel > summary::after { content: "+"; font-family: var(--mono); color: var(--muted); font-size: 16px; }
+details.panel[open] > summary::after { content: "–"; }
+details.panel > .body { padding: 2px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field > .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; }
+.field .val { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12.5px; }
+input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; min-height: 24px; }
+select { font: inherit; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); min-height: 34px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { appearance: none; border: 1px solid var(--line); background: var(--surface); border-radius: 99px; padding: 5px 11px; cursor: pointer; font-size: 13px; min-height: 32px; }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); font-weight: 600; }
+.sub { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; background: color-mix(in srgb, var(--stage) 60%, var(--surface)); }
+.sub .hd { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
+.note { font-size: 12.5px; color: var(--muted); }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.check input { margin-top: 3px; accent-color: var(--accent); }
+.stepper { display: inline-flex; align-items: center; gap: 8px; }
+.stepper b { font-family: var(--mono); min-width: 1.5ch; text-align: center; }
+
+.compare { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 14px; display: flex; flex-direction: column; gap: 14px; box-shadow: var(--shadow); }
+.compare .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 20px; align-items: flex-end; }
+.compare .head > div { min-width: 0; max-width: 70ch; }
+.runrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.progress { width: 160px; height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; min-width: 780px; font-size: 13px; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 11.5px; font-weight: 600; color: var(--muted); letter-spacing: .03em; background: color-mix(in srgb, var(--stage) 70%, var(--surface)); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+tr:last-child td { border-bottom: 0; }
+td { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+td:first-child { font-family: var(--font); min-width: 240px; }
+td .nm { font-weight: 600; display: block; }
+td .ds { font-size: 12px; color: var(--muted); display: block; font-weight: 400; max-width: 46ch; }
+td.best { color: var(--good); font-weight: 600; }
+td.bad { color: var(--bad); }
+td.pending { color: var(--muted); }
+.barcell { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.barcell i { display: block; height: 8px; border-radius: 3px; background: var(--accent); min-width: 2px; }
+.barcell i.miss { background: repeating-linear-gradient(45deg, var(--line), var(--line) 3px, transparent 3px, transparent 6px); border: 1px solid var(--line); }
+.takeaways { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.take { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.take .k { font-size: 12px; color: var(--muted); }
+.take .v { font-weight: 600; }
+.foot { color: var(--muted); font-size: 12.5px; display: flex; flex-direction: column; gap: 6px; max-width: 100ch; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .progress i { transition: none; } }
+</style>
+
+<div class="page">
+  <header>
+    <h1>Mô phỏng luồng gió trong phòng</h1>
+    <p class="lede">Mặt cắt đứng của một phòng 4,8 × 2,8 m, ngoài trời nóng, phòng đang nóng ngột. Đổi vị trí dàn lạnh, quạt và cửa để xem gió lạnh đi đâu, vùng người ngồi mát lên nhanh đến mức nào và khí có thoáng không.</p>
+  </header>
+
+  <div class="layout">
+    <section class="stage" aria-label="Mô phỏng">
+      <div class="view-card">
+        <div class="canvas-wrap">
+          <canvas id="view" role="img" aria-label="Mặt cắt phòng với luồng gió và nhiệt độ"></canvas>
+          <div class="clock" id="clock">0:00</div>
+          <div class="probe" id="probe" hidden></div>
+        </div>
+        <div class="legend">
+          <span id="legend-title">Nhiệt độ không khí (°C)</span>
+          <div class="bar" id="legend-bar"></div>
+          <div class="ticks" id="legend-ticks"></div>
+        </div>
+        <div class="transport">
+          <button class="btn primary" id="btn-play" type="button">Tạm dừng</button>
+          <button class="btn" id="btn-reset" type="button">Chạy lại từ đầu</button>
+          <span class="lbl">Tốc độ</span>
+          <div class="seg" id="seg-speed" role="group" aria-label="Tốc độ mô phỏng"></div>
+          <span class="lbl">Lớp hiển thị</span>
+          <div class="seg" id="seg-layer" role="group" aria-label="Lớp hiển thị"></div>
+          <label class="check" style="align-items:center"><input type="checkbox" id="chk-trails" checked> Vệt gió</label>
+        </div>
+      </div>
+
+      <div class="metrics" id="metrics" aria-live="off"></div>
+
+      <div class="view-card chart-card">
+        <h3>Nhiệt độ theo thời gian
+          <span class="key"><i style="background:var(--accent)"></i>Tại người</span>
+          <span class="key"><i style="background:var(--muted)"></i>Cả vùng sinh hoạt</span>
+          <span class="key"><i style="background:var(--good)"></i>Mục tiêu</span>
+        </h3>
+        <canvas id="chart" role="img" aria-label="Đồ thị nhiệt độ theo thời gian"></canvas>
+      </div>
+    </section>
+
+    <aside class="controls" aria-label="Bố trí phòng">
+      <details class="panel" open>
+        <summary><h3>Điều hòa</h3></summary>
+        <div class="body">
+          <div class="field">
+            <div class="row"><span>Vị trí lắp (chọn một hoặc hai)</span></div>
+            <div class="chips" id="ac-chips"></div>
+          </div>
+          <div id="ac-units" style="display:flex;flex-direction:column;gap:10px"></div>
+          <div class="field">
+            <div class="row"><span>Tổng công suất lạnh</span></div>
+            <select id="sel-cap" aria-label="Tổng công suất lạnh">
+              <option value="2640">9.000 BTU (2,6 kW)</option>
+              <option value="3520" selected>12.000 BTU (3,5 kW)</option>
+              <option value="5280">18.000 BTU (5,3 kW)</option>
+            </select>
+            <span class="note">Nếu bật hai dàn thì công suất chia đều, để so sánh công bằng.</span>
+          </div>
+          <div class="field">
+            <div class="row"><span>Quạt dàn lạnh</span></div>
+            <div class="seg" id="seg-acspeed" role="group" aria-label="Tốc độ quạt dàn lạnh"></div>
+          </div>
+          <div class="field">
+            <div class="row"><span>Nhiệt độ cài đặt máy</span><span class="val" id="val-setT"></span></div>
+            <input type="range" id="rng-setT" min="18" max="28" step="1">
+          </div>
+        </div>
+      </details>
+
+      <details class="panel" open>
+        <summary><h3>Quạt</h3></summary>
+        <div class="body">
+          <div class="chips">
+            <button class="btn small" type="button" data-add="stand">+ Quạt đứng</button>
+            <button class="btn small" type="button" data-add="ceiling">+ Quạt trần</button>
+            <button class="btn small" type="button" data-add="exhaust">+ Quạt hút</button>
+          </div>
+          <div id="fan-list" style="display:flex;flex-direction:column;gap:10px"></div>
+          <p class="note" id="fan-empty">Chưa có quạt nào. Kéo quạt trực tiếp trên hình để đổi chỗ.</p>
+        </div>
+      </details>
+
+      <details class="panel">
+        <summary><h3>Cửa và thông gió</h3></summary>
+        <div class="body">
+          <label class="check"><input type="checkbox" data-open="winL"> Cửa sổ tường trái (cao 1,0 đến 1,9 m)</label>
+          <label class="check"><input type="checkbox" data-open="ventR"> Ô thoáng tường phải (cao 2,1 đến 2,6 m)</label>
+          <label class="check"><input type="checkbox" data-open="doorR"> Khe cửa ra vào, sát sàn (cao 0 đến 0,5 m)</label>
+          <p class="note">Quạt hút chỉ có tác dụng khi có ít nhất một cửa mở để bù gió. Gió bù lấy từ ngoài trời nên mang theo nhiệt.</p>
+        </div>
+      </details>
+
+      <details class="panel">
+        <summary><h3>Người và thời tiết</h3></summary>
+        <div class="body">
+          <div class="field">
+            <div class="row"><span>Số người trong phòng</span>
+              <span class="stepper"><button class="btn small" type="button" id="p-minus" aria-label="Bớt một người">−</button><b id="p-count">2</b><button class="btn small" type="button" id="p-plus" aria-label="Thêm một người">+</button></span>
+            </div>
+            <span class="note">Mỗi người tỏa 100 W và thải CO₂. Kéo người trên hình để đổi chỗ ngồi.</span>
+          </div>
+          <div class="field">
+            <div class="row"><span>Nhiệt độ ngoài trời</span><span class="val" id="val-tOut"></span></div>
+            <input type="range" id="rng-tOut" min="26" max="38" step="1">
+          </div>
+          <div class="field">
+            <div class="row"><span>Nhiệt độ phòng lúc bắt đầu</span><span class="val" id="val-tStart"></span></div>
+            <input type="range" id="rng-tStart" min="28" max="36" step="1">
+          </div>
+          <div class="field">
+            <div class="row"><span>Mục tiêu tại người</span><span class="val" id="val-target"></span></div>
+            <input type="range" id="rng-target" min="23" max="29" step="1">
+          </div>
+        </div>
+      </details>
+    </aside>
+  </div>
+
+  <section class="compare" aria-label="So sánh phương án">
+    <div class="head">
+      <div>
+        <h2>So sánh các phương án bố trí</h2>
+        <p class="lede" style="margin-top:4px">Mỗi phương án chạy 20 phút mô phỏng với cùng tổng công suất, cùng số người, cùng thời tiết đang đặt ở trên. Chạy song song nên mất khoảng nửa phút.</p>
+      </div>
+      <div class="runrow">
+        <div class="progress" aria-hidden="true"><i id="cmp-bar"></i></div>
+        <span class="note" id="cmp-status"></span>
+        <button class="btn primary" id="btn-compare" type="button">Chạy so sánh</button>
+      </div>
+    </div>
+    <div class="takeaways" id="takeaways" hidden></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>Phương án</th>
+          <th>Đạt mục tiêu (phút)</th>
+          <th>T tại người sau 10 phút</th>
+          <th>T tại người sau 20 phút</th>
+          <th>Gió lên người (m/s)</th>
+          <th>CO₂ tại người (ppm)</th>
+          <th>Chênh nhiệt σ (°C)</th>
+          <th>Khí ngoài vào (lần/giờ)</th>
+        </tr></thead>
+        <tbody id="cmp-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <p>Đây là mô hình định tính trên mặt cắt 2D (lưới 8 cm, dòng chảy không nén được, nổi do chênh nhiệt). Dòng gió bám trần, cánh quạt quay, quạt quay đầu và luồng theo chiều sâu phòng không được mô phỏng. Công suất lạnh được quy đổi cho phòng sâu 4 m. Dùng kết quả để so sánh tương đối giữa các cách bố trí, không phải số đo thật.</p>
+    <p>Nhãn gió lên người (dưới 0,2 m/s là êm, trên 0,5 m/s dễ bị lùa) và nhãn CO₂ (dưới 800 ppm tốt, trên 1.200 ppm ngột) là mốc tham khảo thông dụng, không phải quy chuẩn.</p>
+  </footer>
+</div>
+
+<script id="sim-src">
+/* Lõi mô phỏng luồng gió 2D (mặt cắt đứng của phòng).
+ * Lưới MAC, giải tích phân bán-Lagrange + chiếu áp suất (Gauss-Seidel), nổi do nhiệt (Boussinesq),
+ * thêm trường nhiệt độ, CO2 và khối nhiệt (tường/đồ đạc).
+ * Đây là mô hình định tính: 2D không tái hiện được dòng bám trần (Coanda) hay luồng ngang theo chiều sâu phòng. */
+(function (root) {
+  'use strict';
+
+  var H = 0.08;                 // kích thước ô (m)
+  var NXI = 60, NYI = 35;       // số ô bên trong: 4.8 m x 2.8 m
+  var NX = NXI + 2, NY = NYI + 2, N = NX * NY;   // thêm 1 ô viền mỗi phía
+  var ROOM_W = NXI * H, ROOM_H = NYI * H;
+  var AREA = ROOM_W * ROOM_H;
+
+  var DT = 0.1, ITER = 18, OVR = 1.8;
+  var RHO_CP = 1.2 * 1005;      // J/(m3 K)
+  var DEPTH = 4.0;              // chiều sâu giả định của phòng (m): quy đổi W -> W trên mỗi mét sâu
+    var G_BETA = 9.81 / 303;
+  var TAU_A = 240, R_MASS = 8, TAU_ENV = 5000;   // trao đổi không khí <-> khối nhiệt, và khối nhiệt <-> ngoài trời
+  var DRAG = 0.05, KDIFF = 0.05;
+  var C_OUT = 420;
+  var JET = [0.6, 0.9, 1.2];             // vận tốc gió ra dàn lạnh theo 3 mức (m/s)
+  var STAND_V = [1.5, 2.5, 3.5], CEIL_V = [0.6, 1.0, 1.5];
+  var PERSON_HEAT = 100 / (AREA * DEPTH * RHO_CP);   // K/s trung bình toàn phòng cho mỗi người (100 W)
+  var PERSON_CO2 = 0.085;                            // ppm/s trung bình toàn phòng cho mỗi người
+
+  var OPENINGS = {
+    winL:  { wall: 'L', y0: 1.0, y1: 1.9 },
+    ventR: { wall: 'R', y0: 2.1, y1: 2.6 },
+    doorR: { wall: 'R', y0: 0.0, y1: 0.5 }
+  };
+
+  function clamp(x, a, b) { return x < a ? a : (x > b ? b : x); }
+  function ci(x) { return clamp(Math.floor(x / H) + 1, 1, NXI); }
+  function cj(y) { return clamp(Math.floor(y / H) + 1, 1, NYI); }
+  function idx(i, j) { return i * NY + j; }
+
+  function defaultCfg() {
+    return {
+      tOut: 33, tStart: 32, target: 26, cStart: 1000,
+      cap: 3520, acSpeed: 1, supplyT: 14, setT: 24,
+      acs: [
+        { type: 'wallL',  on: true,  angle: 25, y: 2.6, x: 2.4 },
+        { type: 'wallR',  on: false, angle: 25, y: 2.6, x: 2.4 },
+        { type: 'ceil',   on: false, angle: 20, y: 2.6, x: 2.4 },
+        { type: 'floorL', on: false, angle: 60, y: 0, x: 0 },
+        { type: 'floorR', on: false, angle: 60, y: 0, x: 0 }
+      ],
+      fans: [],
+      open: { winL: false, ventR: false, doorR: false },
+      people: [{ x: 1.7 }, { x: 3.3 }]
+    };
+  }
+
+  function Sim(cfg) {
+    this.u = new Float32Array(N); this.v = new Float32Array(N);
+    this.nu = new Float32Array(N); this.nv = new Float32Array(N);
+    this.s = new Uint8Array(N); this.open = new Uint8Array(N);
+    this.T = new Float32Array(N); this.nT = new Float32Array(N);
+    this.C = new Float32Array(N); this.nC = new Float32Array(N);
+    this.Tm = new Float32Array(N);
+    this.src = new Float32Array(N);
+    this.cfg = cfg;
+    this.rebuild();
+    this.reset();
+  }
+
+  Sim.prototype.reset = function () {
+    var cfg = this.cfg;
+    this.u.fill(0); this.v.fill(0);
+    this.T.fill(cfg.tStart); this.Tm.fill(cfg.tStart - 0.5); this.C.fill(cfg.cStart);
+    this.t = 0; this.stepN = 0;
+    this.series = [];
+    this.tReach = null; this.snap10 = null;
+    this.draftSum = 0; this.draftN = 0; this.achSum = 0; this.achN = 0;
+    this.m = null;
+    this.tCtl = cfg.tStart;
+  };
+
+  /* Dựng lại hình học, nguồn/bể từ cấu hình (giữ nguyên các trường đang chạy). */
+  Sim.prototype.rebuild = function () {
+    var cfg = this.cfg, s = this.s, open = this.open, src = this.src, i, j, c, k;
+    s.fill(1); open.fill(0); src.fill(0);
+    for (i = 0; i < NX; i++) for (j = 0; j < NY; j++) {
+      if (i === 0 || i === NX - 1 || j === 0 || j === NY - 1) s[idx(i, j)] = 0;
+    }
+    this.hasOpen = false;
+    for (k in OPENINGS) {
+      if (!cfg.open[k]) continue;
+      var o = OPENINGS[k], j0 = cj(o.y0), j1 = cj(o.y1 - 1e-6), ii = o.wall === 'L' ? 0 : NX - 1;
+      for (j = j0; j <= j1; j++) { c = idx(ii, j); s[c] = 1; open[c] = 1; }
+      this.hasOpen = true;
+    }
+
+    this.units = []; this.fanList = []; this.exhaust = [];
+    var active = cfg.acs.filter(function (a) { return a.on; });
+    var vjet = JET[cfg.acSpeed];
+    for (k = 0; k < active.length; k++) this.addUnit(active[k], cfg.cap / active.length, vjet);
+
+    for (k = 0; k < cfg.fans.length; k++) {
+      var f = cfg.fans[k];
+      if (!f.on) continue;
+      if (f.kind === 'exhaust') {
+        var ie = f.side === 'L' ? 1 : NXI, ja = cj(f.y - 0.12), jb = cj(f.y + 0.12), cells = [];
+        for (j = ja; j <= jb; j++) if (s[idx(ie, j)]) cells.push(idx(ie, j));
+        var q = f.ach * AREA / 3600;   // m2/s trên mỗi mét sâu
+        for (var e = 0; e < cells.length; e++) src[cells[e]] -= q / H / cells.length;
+        this.exhaust.push({ cells: cells });
+      } else this.fanList.push(f);
+    }
+
+    // người: ô nhiệt + CO2 + vùng đo
+    this.pcells = [];
+    for (k = 0; k < cfg.people.length; k++) {
+      var px = cfg.people[k].x, ia = ci(px - 0.22), ib = ci(px + 0.22), j2 = cj(0.30), j3 = cj(1.15);
+      for (i = ia; i <= ib; i++) for (j = j2; j <= j3; j++) if (s[idx(i, j)]) this.pcells.push(idx(i, j));
+    }
+    this.pHeat = this.pcells.length ? PERSON_HEAT * cfg.people.length * NXI * NYI / this.pcells.length : 0;
+    this.pCO2 = this.pcells.length ? PERSON_CO2 * cfg.people.length * NXI * NYI / this.pcells.length : 0;
+
+    // vùng sinh hoạt 0.1 - 1.8 m
+    this.zone = [];
+    var za = cj(0.1), zb = cj(1.8);
+    for (i = 1; i <= NXI; i++) for (j = za; j <= zb; j++) if (s[idx(i, j)]) this.zone.push(idx(i, j));
+
+    // nếu phòng kín thì bỏ phần dư khối lượng của nguồn/bể
+    if (!this.hasOpen) {
+      var net = 0, nf = 0;
+      for (i = 1; i <= NXI; i++) for (j = 1; j <= NYI; j++) { c = idx(i, j); if (s[c]) { net += src[c]; nf++; } }
+      if (nf) { var mean = net / nf; for (i = 1; i <= NXI; i++) for (j = 1; j <= NYI; j++) { c = idx(i, j); if (s[c]) src[c] -= mean; } }
+    }
+  };
+
+  Sim.prototype.solidRect = function (i0, i1, j0, j1) {
+    if (this._rects) this._rects.push({ x0: (i0 - 1) * H, x1: i1 * H, y0: (j0 - 1) * H, y1: j1 * H });
+    for (var i = i0; i <= i1; i++) for (var j = j0; j <= j1; j++) {
+      if (i >= 1 && i <= NXI && j >= 1 && j <= NYI) this.s[idx(i, j)] = 0;
+    }
+  };
+
+  Sim.prototype.addUnit = function (ac, power, vjet) {
+    this._rects = [];
+    var outs = [], ins = [], a = ac.angle * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a), i, j, jt;
+    var M = function (iL) { return NXI + 1 - iL; };
+    switch (ac.type) {
+      case 'wallL': case 'wallR':
+        jt = clamp(cj(ac.y - 1e-6), 6, NYI);
+        var R = ac.type === 'wallR', dx = R ? -ca : ca;
+        var bi = R ? [M(3), M(1)] : [1, 3];
+        this.solidRect(bi[0], bi[1], jt - 3, jt);
+        this.solidRect(R ? M(2) : 1, R ? M(1) : 2, jt - 4, jt - 4);     // máng dẫn gió: ô gió ra nằm ở góc dưới phía trước
+        outs.push({ i: R ? M(3) : 3, j: jt - 4, dx: dx, dy: -sa });
+        // hồi gió ở mặt trên dàn lạnh (nếu sát trần thì lấy ở mặt trước phía trên)
+        if (jt + 1 <= NYI) {
+          for (i = 1; i <= 3; i++) { ins.push({ i: R ? M(i) : i, j: jt + 1 }); if (jt + 2 <= NYI) ins.push({ i: R ? M(i) : i, j: jt + 2 }); }
+        } else ins.push({ i: R ? M(4) : 4, j: jt }, { i: R ? M(4) : 4, j: jt - 1 });
+        break;
+      case 'ceil':
+        var ic = clamp(ci(ac.x), 6, NXI - 5);
+        this.solidRect(ic - 4, ic + 4, NYI - 1, NYI);
+        outs.push({ i: ic - 5, j: NYI, dx: -ca, dy: -sa }, { i: ic + 5, j: NYI, dx: ca, dy: -sa });
+        for (i = ic - 1; i <= ic + 1; i++) ins.push({ i: i, j: NYI - 2 });
+        break;
+      case 'floorL': case 'floorR':
+        var Rr = ac.type === 'floorR', dxf = Rr ? -ca : ca;
+        this.solidRect(Rr ? M(4) : 1, Rr ? M(1) : 4, 1, 20);
+        this.solidRect(Rr ? M(1) : 1, Rr ? M(1) : 1, 21, 21);
+        for (i = 2; i <= 3; i++) outs.push({ i: Rr ? M(i) : i, j: 21, dx: dxf, dy: sa });
+        for (j = 3; j <= 6; j++) ins.push({ i: Rr ? M(5) : 5, j: j });
+        break;
+    }
+    var nOut = outs.length, nIn = ins.length, w = nOut * H;
+    // độ chênh nhiệt gió ra - hồi gió để công suất lạnh = P/DEPTH trên mỗi mét sâu
+    var dTs = (power / DEPTH) / (RHO_CP * w * vjet);
+    for (var o = 0; o < nOut; o++) { outs[o].c = idx(outs[o].i, outs[o].j); this.src[outs[o].c] += vjet; }
+    for (var n = 0; n < nIn; n++) { ins[n].c = idx(ins[n].i, ins[n].j); this.src[ins[n].c] -= nOut * vjet / nIn; }
+    this.units.push({ outs: outs, ins: ins, dTs: dTs, v: vjet, rects: this._rects, type: ac.type });
+    this._rects = null;
+  };
+
+  Sim.prototype.sample = function (f, x, y, dx, dy) {
+    var n = NY, h = H, h1 = 1 / H;
+    x = Math.max(Math.min(x, NX * h), h); y = Math.max(Math.min(y, NY * h), h);
+    var x0 = Math.min(Math.floor((x - dx) * h1), NX - 1), tx = ((x - dx) - x0 * h) * h1, x1 = Math.min(x0 + 1, NX - 1);
+    var y0 = Math.min(Math.floor((y - dy) * h1), NY - 1), ty = ((y - dy) - y0 * h) * h1, y1 = Math.min(y0 + 1, NY - 1);
+    var sx = 1 - tx, sy = 1 - ty;
+    return sx * sy * f[x0 * n + y0] + tx * sy * f[x1 * n + y0] + tx * ty * f[x1 * n + y1] + sx * ty * f[x0 * n + y1];
+  };
+
+  /* kéo vận tốc các mặt trong vùng (toạ độ thế giới, m) về vận tốc đích */
+  Sim.prototype.relax = function (x0, x1, y0, y1, tx, ty, k, round, cx, cy, r) {
+    var s = this.s, u = this.u, v = this.v, i, j, c, d, w, xw, yw;
+    var ia = Math.max(1, Math.floor(x0 / H) + 1), ib = Math.min(NXI + 1, Math.floor(x1 / H) + 2);
+    var ja = Math.max(1, Math.floor(y0 / H) + 1), jb = Math.min(NYI + 1, Math.floor(y1 / H) + 2);
+    for (i = ia; i <= ib; i++) for (j = ja; j <= jb; j++) {
+      c = idx(i, j);
+      if (s[c] && s[c - NY]) {          // mặt u: (i-1)H, (j-0.5)H
+        xw = (i - 1) * H; yw = (j - 0.5) * H;
+        w = this.wgt(xw, yw, x0, x1, y0, y1, round, cx, cy, r);
+        if (w > 0) u[c] += (tx - u[c]) * k * w;
+      }
+      if (s[c] && s[c - 1]) {           // mặt v: (i-0.5)H, (j-1)H
+        xw = (i - 0.5) * H; yw = (j - 1) * H;
+        w = this.wgt(xw, yw, x0, x1, y0, y1, round, cx, cy, r);
+        if (w > 0) v[c] += (ty - v[c]) * k * w;
+      }
+    }
+  };
+  Sim.prototype.wgt = function (x, y, x0, x1, y0, y1, round, cx, cy, r) {
+    if (round) { var d = Math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)); return d < r ? 1 - d / r : 0; }
+    return (x >= x0 && x <= x1 && y >= y0 && y <= y1) ? 1 : 0;
+  };
+
+  Sim.prototype.forces = function (dt) {
+    var s = this.s, v = this.v, u = this.u, T = this.T, i, j, c, k, tref = 0, nf = 0;
+    for (i = 1; i <= NXI; i++) for (j = 1; j <= NYI; j++) { c = idx(i, j); if (s[c]) { tref += T[c]; nf++; } }
+    tref /= nf;
+    for (i = 1; i <= NXI; i++) for (j = 2; j <= NYI; j++) {
+      c = idx(i, j);
+      if (s[c] && s[c - 1]) v[c] += dt * G_BETA * ((T[c] + T[c - 1]) * 0.5 - tref);
+    }
+    // quạt
+    var fl = this.fanList, lvl;
+    for (k = 0; k < fl.length; k++) {
+      var f = fl[k];
+      lvl = clamp((f.speed | 0) - 1, 0, 2);
+      if (f.kind === 'stand') {
+        var el = f.elev * Math.PI / 180, dx = f.dir * Math.cos(el), dy = Math.sin(el), vf = STAND_V[lvl];
+        var cx = f.x + dx * 0.25, cy = f.y + dy * 0.25, r = 0.24;
+        this.relax(cx - r, cx + r, cy - r, cy + r, dx * vf, dy * vf, 0.3, true, cx, cy, r);
+      } else if (f.kind === 'ceiling') {
+        var vc = CEIL_V[lvl] * (f.mode === 'up' ? 1 : -1);
+        this.relax(f.x - 0.5, f.x + 0.5, 2.3, 2.62, 0, vc, 0.25, false);
+      }
+    }
+    // gió ra dàn lạnh
+    for (k = 0; k < this.units.length; k++) {
+      var un = this.units[k];
+      for (var o = 0; o < un.outs.length; o++) {
+        var oc = un.outs[o], cc = oc.c;
+        if (this.s[cc + NY]) u[cc + NY] += (oc.dx * un.v - u[cc + NY]) * 0.9;
+        if (this.s[cc - NY]) u[cc] += (oc.dx * un.v - u[cc]) * 0.9;
+        if (this.s[cc + 1]) v[cc + 1] += (oc.dy * un.v - v[cc + 1]) * 0.9;
+        if (this.s[cc - 1]) v[cc] += (oc.dy * un.v - v[cc]) * 0.9;
+      }
+    }
+    var dr = 1 - DRAG * dt, n2 = u.length;
+    for (c = 0; c < n2; c++) { u[c] *= dr; v[c] *= dr; }
+  };
+
+  Sim.prototype.project = function () {
+    var s = this.s, u = this.u, v = this.v, src = this.src, i, j, c, it;
+    for (i = 0; i < NX; i++) for (j = 0; j < NY; j++) {
+      c = idx(i, j);
+      if (!s[c]) { u[c] = 0; if (i + 1 < NX) u[c + NY] = 0; v[c] = 0; if (j + 1 < NY) v[c + 1] = 0; }
+    }
+    for (it = 0; it < ITER; it++) {
+      for (i = 1; i <= NXI; i++) for (j = 1; j <= NYI; j++) {
+        c = idx(i, j);
+        if (!s[c]) continue;
+        var sx0 = s[c - NY], sx1 = s[c + NY], sy0 = s[c - 1], sy1 = s[c + 1], ss = sx0 + sx1 + sy0 + sy1;
+        if (!ss) continue;
+        var div = u[c + NY] - u[c] + v[c + 1] - v[c] - src[c];
+        var p = -div / ss * OVR;
+        u[c] -= sx0 * p; u[c + NY] += sx1 * p; v[c] -= sy0 * p; v[c + 1] += sy1 * p;
+      }
+    }
+  };
+
+  Sim.prototype.fillSolid = function () {
+    var s = this.s, open = this.open, T = this.T, C = this.C, i, j, c, sum, sc, n;
+    var tout = this.cfg.tOut;
+    for (i = 0; i < NX; i++) for (j = 0; j < NY; j++) {
+      c = idx(i, j);
+      if (open[c]) { T[c] = tout; C[c] = C_OUT; continue; }
+      if (s[c]) continue;
+      sum = 0; sc = 0; n = 0;
+      if (i > 0 && s[c - NY]) { sum += T[c - NY]; sc += C[c - NY]; n++; }
+      if (i < NX - 1 && s[c + NY]) { sum += T[c + NY]; sc += C[c + NY]; n++; }
+      if (j > 0 && s[c - 1]) { sum += T[c - 1]; sc += C[c - 1]; n++; }
+      if (j < NY - 1 && s[c + 1]) { sum += T[c + 1]; sc += C[c + 1]; n++; }
+      if (n) { T[c] = sum / n; C[c] = sc / n; }
+    }
+  };
+
+  Sim.prototype.advect = function (dt) {
+    var s = this.s, u = this.u, v = this.v, nu = this.nu, nv = this.nv, i, j, c, x, y, uu, vv, h = H, h2 = 0.5 * H;
+    this.fillSolid();
+    nu.set(u); nv.set(v);
+    for (i = 1; i < NX; i++) for (j = 1; j < NY; j++) {
+      c = idx(i, j);
+      if (s[c] && s[c - NY] && j < NY - 1) {
+        x = i * h; y = j * h + h2; uu = u[c];
+        vv = (v[c - NY] + v[c] + v[c - NY + 1] + v[c + 1]) * 0.25;
+        nu[c] = this.sample(u, x - dt * uu, y - dt * vv, 0, h2);
+      }
+      if (s[c] && s[c - 1] && i < NX - 1) {
+        x = i * h + h2; y = j * h; vv = v[c];
+        uu = (u[c - 1] + u[c + NY - 1] + u[c] + u[c + NY]) * 0.25;
+        nv[c] = this.sample(v, x - dt * uu, y - dt * vv, h2, 0);
+      }
+    }
+    u.set(nu); v.set(nv);
+    var T = this.T, C = this.C, nT = this.nT, nC = this.nC;
+    nT.set(T); nC.set(C);
+    for (i = 1; i <= NXI; i++) for (j = 1; j <= NYI; j++) {
+      c = idx(i, j);
+      if (!s[c]) continue;
+      uu = (u[c] + u[c + NY]) * 0.5; vv = (v[c] + v[c + 1]) * 0.5;
+      x = (i + 0.5) * h - dt * uu; y = (j + 0.5) * h - dt * vv;
+      nT[c] = this.sample(T, x, y, h2, h2);
+      nC[c] = this.sample(C, x, y, h2, h2);
+    }
+    // khuếch tán nhẹ (xáo trộn rối dưới lưới)
+    for (i = 1; i <= NXI; i++) for (j = 1; j <= NYI; j++) {
+      c = idx(i, j);
+      if (!s[c]) continue;
+      var a = s[c - NY] ? nT[c - NY] : nT[c], b = s[c + NY] ? nT[c + NY] : nT[c],
+          d = s[c - 1] ? nT[c - 1] : nT[c], e = s[c + 1] ? nT[c + 1] : nT[c];
+      T[c] = nT[c] + KDIFF * (a + b + d + e - 4 * nT[c]);
+      a = s[c - NY] ? nC[c - NY] : nC[c]; b = s[c + NY] ? nC[c + NY] : nC[c];
+      d = s[c - 1] ? nC[c - 1] : nC[c]; e = s[c + 1] ? nC[c + 1] : nC[c];
+      C[c] = nC[c] + KDIFF * (a + b + d + e - 4 * nC[c]);
+    }
+  };
+
+  Sim.prototype.thermal = function (dt) {
+    var s = this.s, T = this.T, Tm = this.Tm, C = this.C, i, j, c, k, tout = this.cfg.tOut;
+    for (i = 1; i <= NXI; i++) for (j = 1; j <= NYI; j++) {
+      c = idx(i, j);
+      if (!s[c]) continue;
+      var a = (Tm[c] - T[c]) / TAU_A;
+      T[c] += dt * a;
+      Tm[c] += -dt * a / R_MASS + dt * (tout - Tm[c]) / TAU_ENV;
+    }
+    for (k = 0; k < this.pcells.length; k++) { c = this.pcells[k]; T[c] += dt * this.pHeat; C[c] += dt * this.pCO2; }
+    // Dàn lạnh: khối khí hồi ở cửa hút được đưa ra cửa thổi lạnh hơn dTs (cân bằng năng lượng theo mỗi mét sâu).
+    // Ô gió ra là nguồn thể tích nên khối khí mới sinh ra mang nhiệt độ hồi gió trừ đi dTs.
+    var ts = this.cfg.supplyT, setT = this.cfg.setT;
+    for (k = 0; k < this.units.length; k++) {
+      var un = this.units[k], tr = 0, cr = 0, n = un.ins.length, o;
+      for (o = 0; o < n; o++) { tr += T[un.ins[o].c]; cr += C[un.ins[o].c]; }
+      tr /= n; cr /= n;
+      var pf = clamp((this.tCtl - setT + 0.5) / 1.5, 0, 1);   // máy giảm tải khi phòng gần đạt nhiệt độ cài đặt
+      var tinj = Math.max(ts, tr - un.dTs * pf), beta = un.v * dt / H;
+      for (o = 0; o < un.outs.length; o++) {
+        c = un.outs[o].c;
+        T[c] = Math.max(ts, T[c] + beta * (tinj - T[c]));
+        C[c] += beta * (cr - C[c]);
+      }
+    }
+  };
+
+  Sim.prototype.step = function () {
+    this.forces(DT);
+    this.project();
+    this.advect(DT);
+    this.thermal(DT);
+    this.t += DT; this.stepN++;
+    if (this.stepN % 20 === 0) this.sampleMetrics();
+  };
+
+  Sim.prototype.cellSpeed = function (c) {
+    var uu = (this.u[c] + this.u[c + NY]) * 0.5, vv = (this.v[c] + this.v[c + 1]) * 0.5;
+    return Math.sqrt(uu * uu + vv * vv);
+  };
+
+  Sim.prototype.inflowACH = function () {
+    var q = 0, j, i, c;
+    for (j = 1; j <= NYI; j++) {
+      if (this.open[idx(0, j)]) q += Math.max(0, this.u[idx(1, j)]);
+      if (this.open[idx(NX - 1, j)]) q += Math.max(0, -this.u[idx(NX - 1, j)]);
+    }
+    for (i = 1; i <= NXI; i++) if (this.open[idx(i, NY - 1)]) q += Math.max(0, -this.v[idx(i, NY - 1)]);
+    return q * H * 3600 / AREA;
+  };
+
+  Sim.prototype.sampleMetrics = function () {
+    var m = this.computeMetrics();
+    this.m = m; this.tCtl = m.tZone;
+    this.series.push({ t: this.t, tp: m.tPeople, tz: m.tZone, c: m.cPeople });
+    if (this.tReach === null && m.tPeople <= this.cfg.target) this.tReach = this.t;
+    if (!this.snap10 && this.t >= 600) this.snap10 = { tp: m.tPeople, tz: m.tZone };
+    if (this.t > 60) {
+      this.draftSum += m.vPeople; this.draftN++;
+      this.achSum += m.ach; this.achN++;
+    }
+  };
+
+  Sim.prototype.computeMetrics = function () {
+    var z = this.zone, T = this.T, C = this.C, k, c, sum = 0, sq = 0, cs = 0, mn = 1e9, mx = -1e9;
+    for (k = 0; k < z.length; k++) { c = z[k]; var t = T[c]; sum += t; sq += t * t; cs += C[c]; if (t < mn) mn = t; if (t > mx) mx = t; }
+    var n = z.length || 1, mean = sum / n, sd = Math.sqrt(Math.max(0, sq / n - mean * mean));
+    var tp = mean, cp = cs / n, vp = 0, pc = this.pcells;
+    if (pc.length) {
+      tp = 0; cp = 0; vp = 0;
+      for (k = 0; k < pc.length; k++) { c = pc[k]; tp += T[c]; cp += C[c]; vp += this.cellSpeed(c); }
+      tp /= pc.length; cp /= pc.length; vp /= pc.length;
+    }
+    return { t: this.t, tZone: mean, tStd: sd, tMin: mn, tMax: mx, cZone: cs / n, tPeople: tp, cPeople: cp, vPeople: vp, ach: this.inflowACH() };
+  };
+
+  Sim.prototype.summary = function () {
+    var m = this.computeMetrics();
+    return {
+      t: this.t, tReach: this.tReach, tp10: this.snap10 ? this.snap10.tp : null, tz10: this.snap10 ? this.snap10.tz : null, tPeople: m.tPeople, tZone: m.tZone, tStd: m.tStd,
+      cPeople: m.cPeople, draft: this.draftN ? this.draftSum / this.draftN : m.vPeople,
+      ach: this.achN ? this.achSum / this.achN : m.ach
+    };
+  };
+
+  root.AirSim = {
+    Sim: Sim, defaultCfg: defaultCfg, H: H, NXI: NXI, NYI: NYI, NX: NX, NY: NY, ROOM_W: ROOM_W, ROOM_H: ROOM_H,
+    AREA: AREA, DT: DT, OPENINGS: OPENINGS, JET: JET, STAND_V: STAND_V, CEIL_V: CEIL_V, ci: ci, cj: cj, idx: idx
+  };
+  if (typeof module !== 'undefined' && module.exports) module.exports = root.AirSim;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="presets-src">
+/* Các phương án bố trí để so sánh. Mọi phương án dùng chung tổng công suất lạnh. */
+(function (root) {
+  'use strict';
+  var A = root.AirSim;
+
+  function make(patch) {
+    var c = A.defaultCfg();
+    patch(c);
+    return c;
+  }
+  function ac(c, type, extra) {
+    c.acs.forEach(function (a) { if (a.type === type) { a.on = true; for (var k in extra) a[k] = extra[k]; } });
+  }
+  function off(c, type) { c.acs.forEach(function (a) { if (a.type === type) a.on = false; }); }
+  var fid = 100;
+  function fan(c, o) { o.id = ++fid; o.on = true; c.fans.push(o); }
+
+  var PRESETS = [
+    {
+      id: 'wall', name: 'Treo tường, đóng kín',
+      desc: 'Dàn lạnh treo cao ở tường trái, hướng gió xuống 25°. Làm mốc so sánh.',
+      cfg: function () { return make(function () {}); }
+    },
+    {
+      id: 'stand-back', name: 'Treo tường + quạt đứng thổi ngược về dàn lạnh',
+      desc: 'Quạt đứng đặt sát sàn ở cuối phòng, hướng về phía dàn lạnh, nghiêng lên 20°.',
+      cfg: function () { return make(function (c) { fan(c, { kind: 'stand', x: 4.3, y: 0.55, dir: -1, elev: 20, speed: 2 }); }); }
+    },
+    {
+      id: 'stand-with', name: 'Treo tường + quạt đứng thổi cùng chiều gió lạnh',
+      desc: 'Quạt đặt gần dàn lạnh, thổi theo hướng gió lạnh để đẩy xa hơn.',
+      cfg: function () { return make(function (c) { fan(c, { kind: 'stand', x: 0.9, y: 0.6, dir: 1, elev: 0, speed: 2 }); }); }
+    },
+    {
+      id: 'ceil-up', name: 'Treo tường + quạt trần chạy chiều đẩy lên',
+      desc: 'Quạt trần ở giữa phòng hút gió lên, trộn khí mà không thổi thẳng vào người.',
+      cfg: function () { return make(function (c) { fan(c, { kind: 'ceiling', x: 2.6, y: 2.5, speed: 2, mode: 'up' }); }); }
+    },
+    {
+      id: 'ceil-down', name: 'Treo tường + quạt trần chạy chiều thổi xuống',
+      desc: 'Quạt trần ở giữa phòng thổi xuống, tạo luồng gió trực tiếp lên người bên dưới.',
+      cfg: function () { return make(function (c) { fan(c, { kind: 'ceiling', x: 2.6, y: 2.5, speed: 2, mode: 'down' }); }); }
+    },
+    {
+      id: 'dual', name: 'Hai dàn lạnh đối diện (chia đôi công suất)',
+      desc: 'Hai dàn treo tường ở hai đầu phòng, mỗi dàn một nửa công suất.',
+      cfg: function () { return make(function (c) { ac(c, 'wallR', { angle: 25 }); }); }
+    },
+    {
+      id: 'cassette', name: 'Âm trần giữa phòng',
+      desc: 'Dàn âm trần thổi hai bên dọc theo trần, hút ở giữa.',
+      cfg: function () { return make(function (c) { off(c, 'wallL'); ac(c, 'ceil', { x: 2.4, angle: 20 }); }); }
+    },
+    {
+      id: 'tower', name: 'Tủ đứng đặt góc phòng',
+      desc: 'Tủ đứng ở tường trái, thổi lên chếch về phía phòng, hút ở thấp.',
+      cfg: function () { return make(function (c) { off(c, 'wallL'); ac(c, 'floorL', { angle: 55 }); }); }
+    },
+    {
+      id: 'vent', name: 'Treo tường + quạt hút và hé cửa',
+      desc: 'Thêm quạt hút ở tường phải, hé cửa sổ bên trái và khe cửa để bù gió. Phòng thoáng hơn nhưng hút nhiệt từ ngoài vào.',
+      cfg: function () { return make(function (c) {
+        c.open.winL = true; c.open.doorR = true;
+        fan(c, { kind: 'exhaust', side: 'R', y: 2.3, ach: 6 });
+      }); }
+    }
+  ];
+  root.AirPresets = PRESETS;
+  if (typeof module !== 'undefined' && module.exports) module.exports = PRESETS;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+(function () {
+'use strict';
+var A = window.AirSim, PRESETS = window.AirPresets;
+var H = A.H, RW = A.ROOM_W, RH = A.ROOM_H, NXI = A.NXI, NYI = A.NYI, NY = A.NY;
+var $ = function (s, r) { return (r || document).querySelector(s); };
+var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+function el(tag, attrs, kids) {
+  var e = document.createElement(tag), k;
+  for (k in (attrs || {})) { if (k === 'text') e.textContent = attrs[k]; else if (k === 'html') e.innerHTML = attrs[k]; else e.setAttribute(k, attrs[k]); }
+  (kids || []).forEach(function (c) { e.appendChild(c); });
+  return e;
+}
+function clamp(x, a, b) { return x < a ? a : (x > b ? b : x); }
+function fmt(x, d) { return x.toFixed(d).replace('.', ','); }
+function mmss(t) { var m = Math.floor(t / 60), s = Math.floor(t % 60); return m + ':' + (s < 10 ? '0' : '') + s; }
+function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function safeSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+/* ---------- trạng thái ---------- */
+var cfg = A.defaultCfg();
+var sim = new A.Sim(cfg);
+var ui = { playing: !window.matchMedia('(prefers-reduced-motion: reduce)').matches, speed: 24, layer: 'T', trails: true };
+var SPEEDS = [[3, '×3'], [6, '×6'], [24, '×24'], [72, '×72'], [180, '×180']];
+var fanSeq = 1, hover = null;
+
+/* ---------- màu theo giao diện ---------- */
+var TOK = {}, DARK = false;
+function readTokens() {
+  var cs = getComputedStyle(document.documentElement), names = ['ink', 'muted', 'line', 'surface', 'stage', 'accent', 'good', 'warn', 'bad'];
+  names.forEach(function (n) { TOK[n] = cs.getPropertyValue('--' + n).trim(); });
+  var dt = document.documentElement.getAttribute('data-theme');
+  DARK = dt === 'dark' || (dt !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  buildLegend();
+}
+var RAMPS = {
+  T: { lo: 16, hi: 36, unit: '°C', title: 'Nhiệt độ không khí (°C)', ticks: [16, 20, 24, 28, 32, 36],
+       light: [[16, 38, 70, 170], [20, 57, 150, 214], [23, 160, 214, 226], [26, 240, 244, 240], [29, 250, 205, 120], [32, 238, 120, 70], [36, 170, 35, 50]],
+       dark:  [[16, 30, 50, 140], [20, 35, 95, 170], [23, 40, 105, 125], [26, 58, 72, 80], [29, 150, 110, 50], [32, 200, 90, 55], [36, 190, 40, 60]] },
+  C: { lo: 420, hi: 1800, unit: 'ppm', title: 'CO₂ (ppm)', ticks: [400, 800, 1200, 1600],
+       light: [[420, 245, 247, 240], [800, 240, 226, 150], [1200, 214, 160, 70], [1800, 120, 60, 40]],
+       dark:  [[420, 40, 52, 58], [800, 90, 85, 50], [1200, 140, 95, 45], [1800, 170, 70, 60]] },
+  V: { lo: 0, hi: 1.5, unit: 'm/s', title: 'Tốc độ gió (m/s)', ticks: [0, 0.3, 0.6, 0.9, 1.2],
+       light: [[0, 244, 247, 248], [0.3, 170, 215, 230], [0.8, 60, 150, 190], [1.5, 10, 60, 110]],
+       dark:  [[0, 38, 48, 54], [0.3, 40, 90, 110], [0.8, 50, 150, 180], [1.5, 140, 225, 240]] }
+};
+function rampColor(key, v, out) {
+  var st = RAMPS[key][DARK ? 'dark' : 'light'], i = 0;
+  if (v <= st[0][0]) { out[0] = st[0][1]; out[1] = st[0][2]; out[2] = st[0][3]; return; }
+  while (i < st.length - 1 && v > st[i + 1][0]) i++;
+  if (i >= st.length - 1) { var l = st[st.length - 1]; out[0] = l[1]; out[1] = l[2]; out[2] = l[3]; return; }
+  var a = st[i], b = st[i + 1], t = (v - a[0]) / (b[0] - a[0]);
+  out[0] = a[1] + (b[1] - a[1]) * t; out[1] = a[2] + (b[2] - a[2]) * t; out[2] = a[3] + (b[3] - a[3]) * t;
+}
+function buildLegend() {
+  var r = RAMPS[ui.layer], st = r[DARK ? 'dark' : 'light'], stops = st.map(function (s) {
+    return 'rgb(' + s[1] + ',' + s[2] + ',' + s[3] + ') ' + ((s[0] - r.lo) / (r.hi - r.lo) * 100).toFixed(1) + '%';
+  });
+  $('#legend-bar').style.background = 'linear-gradient(90deg,' + stops.join(',') + ')';
+  $('#legend-title').textContent = r.title;
+  var tk = $('#legend-ticks'); tk.innerHTML = '';
+  r.ticks.forEach(function (v) { tk.appendChild(el('span', { text: String(v).replace('.', ','), style: 'left:' + ((v - r.lo) / (r.hi - r.lo) * 100).toFixed(1) + '%' })); });
+}
+
+/* ---------- canvas chính ---------- */
+var cv = $('#view'), ctx = cv.getContext('2d');
+var PAD = { l: 0.5, r: 0.5, t: 0.2, b: 0.2 }, WW = RW + PAD.l + PAD.r, WH = RH + PAD.t + PAD.b;
+var sc = 100, dpr = 1;
+var off = document.createElement('canvas'); off.width = NXI; off.height = NYI;
+var offCtx = off.getContext('2d'), img = offCtx.createImageData(NXI, NYI);
+function X(x) { return (PAD.l + x) * sc; }
+function Y(y) { return (PAD.t + RH - y) * sc; }
+function resize() {
+  var w = cv.clientWidth || 700; dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(w * dpr * WH / WW);
+  sc = cv.width / WW;
+  var ch = $('#chart'), cw = ch.clientWidth || 600;
+  ch.width = Math.round(cw * dpr); ch.height = Math.round(150 * dpr);
+}
+
+/* hạt vệt gió */
+var NP = 520, TR = 6;
+var pp = { x: new Float32Array(NP), y: new Float32Array(NP), life: new Float32Array(NP), tr: new Float32Array(NP * TR * 2) };
+function spawnPoint(k) {
+  var r = Math.random(), i, p;
+  if (r < 0.35) {
+    var pts = [];
+    sim.units.forEach(function (u) { u.outs.forEach(function (o) { pts.push([(o.i - 0.5) * H, (o.j - 0.5) * H]); }); });
+    sim.fanList.forEach(function (f) { pts.push(f.kind === 'stand' ? [f.x + f.dir * 0.25, f.y] : [f.x + (Math.random() - 0.5), 2.45]); });
+    if (pts.length) { p = pts[(Math.random() * pts.length) | 0]; pp.x[k] = p[0] + (Math.random() - 0.5) * 0.08; pp.y[k] = p[1] + (Math.random() - 0.5) * 0.08; pp.life[k] = 2 + Math.random() * 3; return; }
+  }
+  for (i = 0; i < 12; i++) {
+    var x = Math.random() * RW, y = Math.random() * RH, c = A.idx(A.ci(x), A.cj(y));
+    if (sim.s[c]) { pp.x[k] = x; pp.y[k] = y; pp.life[k] = 3 + Math.random() * 6; return; }
+  }
+  pp.x[k] = RW / 2; pp.y[k] = RH / 2; pp.life[k] = 3;
+}
+function initParticles() {
+  for (var k = 0; k < NP; k++) { spawnPoint(k); pp.life[k] *= Math.random(); for (var t = 0; t < TR; t++) { pp.tr[(k * TR + t) * 2] = pp.x[k]; pp.tr[(k * TR + t) * 2 + 1] = pp.y[k]; } }
+}
+function vel(x, y, out) {
+  var sx = x + H, sy = y + H;
+  out[0] = sim.sample(sim.u, sx, sy, 0, H / 2); out[1] = sim.sample(sim.v, sx, sy, H / 2, 0);
+}
+var _v = [0, 0];
+function stepParticles(dtv) {
+  for (var k = 0; k < NP; k++) {
+    for (var t = TR - 1; t > 0; t--) { pp.tr[(k * TR + t) * 2] = pp.tr[(k * TR + t - 1) * 2]; pp.tr[(k * TR + t) * 2 + 1] = pp.tr[(k * TR + t - 1) * 2 + 1]; }
+    pp.tr[k * TR * 2] = pp.x[k]; pp.tr[k * TR * 2 + 1] = pp.y[k];
+    vel(pp.x[k], pp.y[k], _v);
+    pp.x[k] += _v[0] * dtv; pp.y[k] += _v[1] * dtv; pp.life[k] -= dtv;
+    var c = A.idx(A.ci(pp.x[k]), A.cj(pp.y[k]));
+    if (pp.life[k] <= 0 || pp.x[k] < 0 || pp.x[k] > RW || pp.y[k] < 0 || pp.y[k] > RH || !sim.s[c]) {
+      spawnPoint(k);
+      for (var t2 = 0; t2 < TR; t2++) { pp.tr[(k * TR + t2) * 2] = pp.x[k]; pp.tr[(k * TR + t2) * 2 + 1] = pp.y[k]; }
+    }
+  }
+}
+
+/* vẽ */
+var spin = 0;
+function layerValue(c) {
+  if (ui.layer === 'T') return sim.T[c];
+  if (ui.layer === 'C') return sim.C[c];
+  return sim.cellSpeed(c);
+}
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+var HIT = [];
+function draw() {
+  var W = cv.width, Hh = cv.height, i, j, k, px = img.data, col = [0, 0, 0];
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = TOK.stage; ctx.fillRect(0, 0, W, Hh);
+  // bản đồ trường
+  for (j = 1; j <= NYI; j++) for (i = 1; i <= NXI; i++) {
+    var c = A.idx(i, j), o = ((NYI - j) * NXI + (i - 1)) * 4;
+    rampColor(ui.layer, layerValue(c), col);
+    px[o] = col[0]; px[o + 1] = col[1]; px[o + 2] = col[2]; px[o + 3] = 255;
+  }
+  offCtx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(off, X(0), Y(RH), RW * sc, RH * sc);
+
+  // vệt gió
+  if (ui.trails) {
+    ctx.lineCap = 'round';
+    var rgb = DARK ? '225,242,250' : '10,28,38';
+    for (k = 0; k < NP; k++) {
+      vel(pp.x[k], pp.y[k], _v);
+      var sp = Math.sqrt(_v[0] * _v[0] + _v[1] * _v[1]);
+      if (sp < 0.03) continue;
+      var al = Math.min(0.75, 0.12 + sp * 0.9) * Math.min(1, pp.life[k] * 2);
+      ctx.strokeStyle = 'rgba(' + rgb + ',' + al.toFixed(3) + ')'; ctx.lineWidth = Math.max(1, sc * 0.012);
+      ctx.beginPath(); ctx.moveTo(X(pp.x[k]), Y(pp.y[k]));
+      for (var t = 0; t < TR; t++) ctx.lineTo(X(pp.tr[(k * TR + t) * 2]), Y(pp.tr[(k * TR + t) * 2 + 1]));
+      ctx.stroke();
+    }
+  }
+
+  drawWalls();
+  HIT.length = 0;
+  drawAC(); drawPeople(); drawFans();
+  if (hover) drawProbe();
+}
+function drawWalls() {
+  var lw = Math.max(3, sc * 0.045), k, o;
+  ctx.lineWidth = lw; ctx.strokeStyle = TOK.ink; ctx.lineCap = 'butt';
+  function seg(x0, y0, x1, y1) { ctx.beginPath(); ctx.moveTo(X(x0), Y(y0)); ctx.lineTo(X(x1), Y(y1)); ctx.stroke(); }
+  seg(-lw / sc / 2, 0, RW + lw / sc / 2, 0); seg(-lw / sc / 2, RH, RW + lw / sc / 2, RH);
+  ['L', 'R'].forEach(function (wall) {
+    var xs = wall === 'L' ? 0 : RW, ranges = [];
+    for (k in A.OPENINGS) if (cfg.open[k] && A.OPENINGS[k].wall === wall) ranges.push([A.OPENINGS[k].y0, A.OPENINGS[k].y1]);
+    ranges.sort(function (a, b) { return a[0] - b[0]; });
+    var y = 0;
+    ranges.forEach(function (r) { if (r[0] > y) seg(xs, y, xs, r[0]); y = Math.max(y, r[1]); });
+    if (y < RH) seg(xs, y, xs, RH);
+    ranges.forEach(function (r) {
+      ctx.save(); ctx.strokeStyle = TOK.accent; ctx.lineWidth = Math.max(2, sc * 0.02); ctx.setLineDash([sc * 0.05, sc * 0.04]);
+      ctx.beginPath(); ctx.moveTo(X(xs), Y(r[0])); ctx.lineTo(X(xs), Y(r[1])); ctx.stroke(); ctx.restore();
+      ctx.fillStyle = TOK.muted; ctx.font = Math.round(sc * 0.095) + 'px ' + 'IBM Plex Mono, monospace';
+      ctx.textAlign = wall === 'L' ? 'right' : 'left';
+      ctx.fillText(Math.round(cfg.tOut) + '°', X(xs) + (wall === 'L' ? -sc * 0.1 : sc * 0.1), Y((r[0] + r[1]) / 2) + sc * 0.03);
+    });
+  });
+}
+function drawAC() {
+  sim.units.forEach(function (u) {
+    ctx.fillStyle = TOK.surface; ctx.strokeStyle = TOK.ink; ctx.lineWidth = Math.max(1.5, sc * 0.015);
+    var bb = null;
+    u.rects.forEach(function (r) {
+      rr(X(r.x0), Y(r.y1), (r.x1 - r.x0) * sc, (r.y1 - r.y0) * sc, sc * 0.03); ctx.fill(); ctx.stroke();
+      if (!bb) bb = { x0: r.x0, x1: r.x1, y0: r.y0, y1: r.y1 };
+      else { bb.x0 = Math.min(bb.x0, r.x0); bb.x1 = Math.max(bb.x1, r.x1); bb.y0 = Math.min(bb.y0, r.y0); bb.y1 = Math.max(bb.y1, r.y1); }
+    });
+    u.outs.forEach(function (o) {
+      var cx = (o.i - 0.5) * H, cy = (o.j - 0.5) * H, L = 0.2;
+      arrow(cx, cy, cx + o.dx * L, cy + o.dy * L, TOK.accent);
+    });
+    var ac = null; cfg.acs.forEach(function (a) { if (a.on && a.type === u.type) ac = a; });
+    if (ac && bb) HIT.push({ kind: 'ac', ref: ac, x: (bb.x0 + bb.x1) / 2, y: (bb.y0 + bb.y1) / 2, rx: Math.max(0.3, (bb.x1 - bb.x0) / 2 + 0.1), ry: Math.max(0.3, (bb.y1 - bb.y0) / 2 + 0.1) });
+  });
+}
+function arrow(x0, y0, x1, y1, color) {
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = Math.max(2, sc * 0.022);
+  ctx.beginPath(); ctx.moveTo(X(x0), Y(y0)); ctx.lineTo(X(x1), Y(y1)); ctx.stroke();
+  var a = Math.atan2(Y(y1) - Y(y0), X(x1) - X(x0)), s = sc * 0.045;
+  ctx.beginPath(); ctx.moveTo(X(x1), Y(y1)); ctx.lineTo(X(x1) - s * Math.cos(a - 0.45), Y(y1) - s * Math.sin(a - 0.45)); ctx.lineTo(X(x1) - s * Math.cos(a + 0.45), Y(y1) - s * Math.sin(a + 0.45)); ctx.closePath(); ctx.fill();
+}
+function drawPeople() {
+  cfg.people.forEach(function (p, idx) {
+    var x = p.x;
+    ctx.fillStyle = TOK.ink; ctx.strokeStyle = TOK.ink; ctx.lineWidth = Math.max(2, sc * 0.03); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.globalAlpha = 0.82;
+    // ghế
+    ctx.beginPath(); ctx.moveTo(X(x - 0.16), Y(0.46)); ctx.lineTo(X(x + 0.2), Y(0.46)); ctx.moveTo(X(x - 0.12), Y(0.46)); ctx.lineTo(X(x - 0.12), Y(0)); ctx.moveTo(X(x + 0.16), Y(0.46)); ctx.lineTo(X(x + 0.16), Y(0)); ctx.stroke();
+    // thân, đùi, cẳng chân
+    ctx.lineWidth = Math.max(4, sc * 0.09);
+    ctx.beginPath(); ctx.moveTo(X(x - 0.06), Y(0.52)); ctx.lineTo(X(x - 0.04), Y(0.92)); ctx.stroke();
+    ctx.lineWidth = Math.max(3, sc * 0.06);
+    ctx.beginPath(); ctx.moveTo(X(x - 0.06), Y(0.52)); ctx.lineTo(X(x + 0.3), Y(0.52)); ctx.lineTo(X(x + 0.3), Y(0.06)); ctx.stroke();
+    ctx.beginPath(); ctx.arc(X(x - 0.03), Y(1.04), sc * 0.075, 0, 6.283); ctx.fill();
+    ctx.globalAlpha = 1;
+    HIT.push({ kind: 'person', ref: p, x: x + 0.1, y: 0.6, rx: 0.35, ry: 0.6 });
+  });
+}
+function drawFans() {
+  spin += 0.35;
+  cfg.fans.forEach(function (f) {
+    if (!f.on) return;
+    ctx.strokeStyle = TOK.ink; ctx.fillStyle = TOK.surface; ctx.lineWidth = Math.max(2, sc * 0.024); ctx.lineCap = 'round';
+    if (f.kind === 'stand') {
+      var el_ = f.elev * Math.PI / 180, dx = f.dir * Math.cos(el_), dy = Math.sin(el_);
+      ctx.beginPath(); ctx.moveTo(X(f.x), Y(0.02)); ctx.lineTo(X(f.x), Y(f.y - 0.1)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(X(f.x - 0.16), Y(0.02)); ctx.lineTo(X(f.x + 0.16), Y(0.02)); ctx.stroke();
+      ctx.save(); ctx.translate(X(f.x), Y(f.y)); ctx.rotate(-Math.atan2(dy, dx));
+      rr(-sc * 0.03, -sc * 0.17, sc * 0.08, sc * 0.34, sc * 0.03); ctx.fill(); ctx.stroke();
+      for (var b = 0; b < 3; b++) { ctx.beginPath(); ctx.moveTo(sc * 0.09, 0); var yy = Math.sin(spin + b * 2.09) * sc * 0.13; ctx.lineTo(sc * 0.13, yy); ctx.stroke(); }
+      ctx.restore();
+      HIT.push({ kind: 'fan', ref: f, x: f.x, y: f.y, rx: 0.3, ry: 0.3 });
+    } else if (f.kind === 'ceiling') {
+      ctx.beginPath(); ctx.moveTo(X(f.x), Y(RH)); ctx.lineTo(X(f.x), Y(2.58)); ctx.stroke();
+      rr(X(f.x) - sc * 0.07, Y(2.58), sc * 0.14, sc * 0.1, sc * 0.02); ctx.fill(); ctx.stroke();
+      var wv = Math.abs(Math.cos(spin * 0.7));
+      ctx.lineWidth = Math.max(3, sc * 0.03);
+      ctx.beginPath(); ctx.moveTo(X(f.x - 0.5 * (0.35 + 0.65 * wv)), Y(2.5)); ctx.lineTo(X(f.x + 0.5 * (0.35 + 0.65 * wv)), Y(2.5)); ctx.stroke();
+      ctx.lineWidth = Math.max(2, sc * 0.02); ctx.strokeStyle = TOK.accent;
+      var d = f.mode === 'up' ? 1 : -1;
+      [-0.25, 0.25].forEach(function (ox) { arrow(f.x + ox, 2.4, f.x + ox, 2.4 + d * 0.2, TOK.accent); });
+      HIT.push({ kind: 'fan', ref: f, x: f.x, y: 2.5, rx: 0.55, ry: 0.25 });
+    } else {
+      var xs = f.side === 'L' ? 0.0 : RW, sg = f.side === 'L' ? 1 : -1;
+      ctx.beginPath(); ctx.arc(X(xs + sg * 0.1), Y(f.y), sc * 0.14, 0, 6.283); ctx.fill(); ctx.stroke();
+      for (var q = 0; q < 3; q++) { var a = spin + q * 2.09; ctx.beginPath(); ctx.moveTo(X(xs + sg * 0.1), Y(f.y)); ctx.lineTo(X(xs + sg * 0.1) + Math.cos(a) * sc * 0.12, Y(f.y) + Math.sin(a) * sc * 0.12); ctx.stroke(); }
+      arrow(xs + sg * 0.1, f.y, xs - sg * 0.2, f.y, TOK.accent);
+      HIT.push({ kind: 'fan', ref: f, x: xs + sg * 0.1, y: f.y, rx: 0.3, ry: 0.3 });
+    }
+  });
+}
+function drawProbe() {
+  var c = A.idx(A.ci(hover.x), A.cj(hover.y)); if (!sim.s[c]) return;
+  ctx.strokeStyle = TOK.ink; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(X(hover.x), Y(hover.y), sc * 0.05, 0, 6.283); ctx.stroke();
+  var pr = $('#probe'); pr.hidden = false;
+  pr.textContent = fmt(sim.T[c], 1) + ' °C · ' + Math.round(sim.C[c]) + ' ppm · ' + fmt(sim.cellSpeed(c), 2) + ' m/s';
+}
+
+/* ---------- đồ thị ---------- */
+var ch = $('#chart'), cc = ch.getContext('2d');
+function drawChart() {
+  var W = ch.width, Hh = ch.height, ser = sim.series, mx = 0, padL = 34 * dpr, padB = 20 * dpr, padT = 8 * dpr, padR = 8 * dpr;
+  cc.setTransform(1, 0, 0, 1, 0, 0); cc.clearRect(0, 0, W, Hh);
+  var tmax = Math.max(1200, sim.t), ymin = 18, ymax = Math.max(cfg.tStart + 1, 30);
+  ymax = Math.ceil(ymax / 2) * 2;
+  function px(t) { return padL + (t / tmax) * (W - padL - padR); }
+  function py(v) { return padT + (1 - (v - ymin) / (ymax - ymin)) * (Hh - padT - padB); }
+  cc.font = (10.5 * dpr) + 'px IBM Plex Mono, monospace'; cc.textBaseline = 'middle'; cc.textAlign = 'right';
+  cc.strokeStyle = TOK.line; cc.fillStyle = TOK.muted; cc.lineWidth = 1 * dpr;
+  for (var v = ymin; v <= ymax; v += 2) { cc.beginPath(); cc.moveTo(padL, py(v)); cc.lineTo(W - padR, py(v)); cc.stroke(); if ((v - ymin) % 4 === 0) cc.fillText(String(v), padL - 5 * dpr, py(v)); }
+  cc.textAlign = 'center'; cc.textBaseline = 'top';
+  for (var m = 0; m * 300 <= tmax; m++) cc.fillText(String(m * 5) + "'", px(m * 300), Hh - padB + 4 * dpr);
+  // mục tiêu
+  cc.setLineDash([5 * dpr, 4 * dpr]); cc.strokeStyle = TOK.good; cc.lineWidth = 1.5 * dpr;
+  cc.beginPath(); cc.moveTo(padL, py(cfg.target)); cc.lineTo(W - padR, py(cfg.target)); cc.stroke(); cc.setLineDash([]);
+  function line(key, color, w) {
+    if (ser.length < 2) return;
+    cc.strokeStyle = color; cc.lineWidth = w * dpr; cc.lineJoin = 'round'; cc.beginPath();
+    cc.moveTo(px(0), py(cfg.tStart));
+    for (var i = 0; i < ser.length; i++) cc.lineTo(px(ser[i].t), py(clamp(ser[i][key], ymin, ymax)));
+    cc.stroke();
+  }
+  line('tz', TOK.muted, 1.6); line('tp', TOK.accent, 2.4);
+  if (sim.tReach !== null) {
+    cc.fillStyle = TOK.accent; cc.beginPath(); cc.arc(px(sim.tReach), py(cfg.target), 4 * dpr, 0, 6.283); cc.fill();
+  }
+}
+
+/* ---------- chỉ số ---------- */
+function tile(k, v, unit, sub) { return el('div', { class: 'tile' }, [el('div', { class: 'k', text: k }), el('div', { class: 'v', html: v + (unit ? '<small>' + unit + '</small>' : '') }), el('div', { class: 's', html: sub || '&nbsp;' })]); }
+function pill(cls, txt) { return '<span class="pill ' + cls + '">' + txt + '</span>'; }
+function renderMetrics() {
+  var m = sim.computeMetrics(), box = $('#metrics'); box.innerHTML = '';
+  var hasP = cfg.people.length > 0;
+  box.appendChild(tile(hasP ? 'Nhiệt độ tại người' : 'Nhiệt độ vùng sinh hoạt', fmt(m.tPeople, 1), '°C', 'Cả vùng sinh hoạt ' + fmt(m.tZone, 1) + ' °C'));
+  var reach = sim.tReach !== null ? pill('good', 'Đã đạt') : pill('idle', 'Đang chờ');
+  box.appendChild(tile('Đạt ' + cfg.target + ' °C sau', sim.tReach !== null ? mmss(sim.tReach) : '—', sim.tReach !== null ? 'phút' : '', reach));
+  box.appendChild(tile('Chênh nhiệt trong phòng', '±' + fmt(m.tStd, 1), '°C', 'Lạnh nhất ' + fmt(m.tMin, 1) + ', nóng nhất ' + fmt(m.tMax, 1)));
+  var v = m.vPeople, vp = v < 0.2 ? pill('good', 'Êm') : (v <= 0.5 ? pill('warn', 'Gió nhẹ') : pill('bad', 'Dễ bị lùa'));
+  box.appendChild(tile('Gió lên người', fmt(v, 2), 'm/s', hasP ? vp : 'Chưa có người'));
+  var c = m.cPeople, cp = c < 800 ? pill('good', 'Thoáng') : (c <= 1200 ? pill('warn', 'Hơi ngột') : pill('bad', 'Ngột'));
+  box.appendChild(tile('CO₂ tại người', String(Math.round(c)), 'ppm', cp));
+  box.appendChild(tile('Khí ngoài vào', fmt(m.ach, 1), 'lần/giờ', m.ach > 0.2 ? 'Mang theo nhiệt từ ngoài' : 'Phòng kín'));
+}
+
+/* ---------- vòng lặp ---------- */
+var last = performance.now(), acc = 0, lastUi = 0, simPerReal = 0;
+function frame(now) {
+  var dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (ui.playing) {
+    acc += ui.speed * dt / A.DT;
+    var t0 = performance.now(), n = 0;
+    while (acc >= 1 && performance.now() - t0 < 14) { sim.step(); acc -= 1; n++; }
+    if (acc > 20) acc = 20;
+    simPerReal = n * A.DT / Math.max(dt, 1e-3);
+  }
+  if (ui.trails) stepParticles(Math.min(dt, 0.05) * 3);
+  draw();
+  $('#clock').textContent = mmss(sim.t) + ' · ' + (ui.playing ? '×' + Math.round(simPerReal) : 'dừng');
+  if (now - lastUi > 250) { lastUi = now; renderMetrics(); drawChart(); }
+  requestAnimationFrame(frame);
+}
+
+/* ---------- điều khiển ---------- */
+var AC_NAMES = { wallL: 'Treo tường trái', wallR: 'Treo tường phải', ceil: 'Âm trần giữa', floorL: 'Tủ đứng trái', floorR: 'Tủ đứng phải' };
+function changed() { sim.rebuild(); }
+function slider(label, min, max, step, value, unit, onInput, dec) {
+  var id = 'r' + Math.random().toString(36).slice(2, 8), val = el('span', { class: 'val' }), inp = el('input', { type: 'range', id: id, min: min, max: max, step: step });
+  inp.value = value;
+  function show() { val.textContent = fmt(+inp.value, dec || 0) + ' ' + unit; }
+  show();
+  inp.addEventListener('input', function () { show(); onInput(+inp.value); });
+  return el('div', { class: 'field' }, [el('div', { class: 'row' }, [el('label', { for: id, text: label }), val]), inp]);
+}
+function segment(options, current, onPick, label) {
+  var box = el('div', { class: 'seg', role: 'group', 'aria-label': label || '' });
+  options.forEach(function (o) {
+    var b = el('button', { type: 'button', text: o[1], 'aria-pressed': String(o[0] === current) });
+    b.addEventListener('click', function () { $$('button', box).forEach(function (x) { x.setAttribute('aria-pressed', 'false'); }); b.setAttribute('aria-pressed', 'true'); onPick(o[0]); });
+    box.appendChild(b);
+  });
+  return box;
+}
+function renderAC() {
+  var chips = $('#ac-chips'); chips.innerHTML = '';
+  cfg.acs.forEach(function (a) {
+    var b = el('button', { type: 'button', class: 'chip', 'aria-pressed': String(a.on), text: AC_NAMES[a.type] });
+    b.addEventListener('click', function () {
+      var on = cfg.acs.filter(function (x) { return x.on; });
+      if (a.on) { if (on.length === 1) return; a.on = false; }
+      else { if (on.length >= 2) on[0].on = false; a.on = true; }
+      changed(); renderAC();
+    });
+    chips.appendChild(b);
+  });
+  var box = $('#ac-units'); box.innerHTML = '';
+  cfg.acs.forEach(function (a) {
+    if (!a.on) return;
+    var s = el('div', { class: 'sub' }, [el('div', { class: 'hd' }, [el('span', { text: AC_NAMES[a.type] })])]);
+    var floor = a.type.indexOf('floor') === 0;
+    s.appendChild(slider(floor ? 'Góc thổi lên so với phương ngang' : 'Góc thổi xuống so với phương ngang', floor ? 20 : 0, floor ? 80 : 60, 5, a.angle, '°', function (v) { a.angle = v; changed(); }));
+    if (a.type === 'wallL' || a.type === 'wallR') s.appendChild(slider('Độ cao mép trên dàn lạnh', 2.0, 2.7, 0.05, a.y, 'm', function (v) { a.y = v; changed(); }, 2));
+    if (a.type === 'ceil') s.appendChild(slider('Vị trí ngang', 0.6, 4.2, 0.1, a.x, 'm', function (v) { a.x = v; changed(); }, 1));
+    box.appendChild(s);
+  });
+}
+function newFan(kind) {
+  var f = { id: ++fanSeq, kind: kind, on: true, speed: 2 };
+  if (kind === 'stand') { f.x = 4.2; f.y = 0.6; f.dir = -1; f.elev = 15; }
+  if (kind === 'ceiling') { f.x = 2.6; f.y = 2.5; f.mode = 'up'; }
+  if (kind === 'exhaust') { f.side = 'R'; f.y = 2.3; f.ach = 6; }
+  return f;
+}
+var FAN_NAMES = { stand: 'Quạt đứng', ceiling: 'Quạt trần', exhaust: 'Quạt hút' };
+function renderFans() {
+  var box = $('#fan-list'); box.innerHTML = '';
+  $('#fan-empty').hidden = cfg.fans.length > 0;
+  var counts = {};
+  cfg.fans.forEach(function (f) {
+    counts[f.kind] = (counts[f.kind] || 0) + 1;
+    var rm = el('button', { type: 'button', class: 'btn small danger', text: 'Xóa' });
+    rm.addEventListener('click', function () { cfg.fans.splice(cfg.fans.indexOf(f), 1); changed(); renderFans(); });
+    var s = el('div', { class: 'sub' }, [el('div', { class: 'hd' }, [el('span', { text: FAN_NAMES[f.kind] + ' ' + counts[f.kind] }), rm])]);
+    if (f.kind === 'stand') {
+      s.appendChild(segment([[-1, 'Hướng sang trái'], [1, 'Hướng sang phải']], f.dir, function (v) { f.dir = v; changed(); }, 'Hướng quạt'));
+      s.appendChild(slider('Góc nâng đầu quạt', -20, 70, 5, f.elev, '°', function (v) { f.elev = v; changed(); }));
+      s.appendChild(slider('Vị trí ngang', 0.3, 4.5, 0.1, f.x, 'm', function (v) { f.x = v; changed(); }, 1));
+      s.appendChild(slider('Độ cao', 0.2, 1.6, 0.05, f.y, 'm', function (v) { f.y = v; changed(); }, 2));
+      s.appendChild(segment([[1, 'Số 1'], [2, 'Số 2'], [3, 'Số 3']], f.speed, function (v) { f.speed = v; changed(); }, 'Tốc độ quạt'));
+    } else if (f.kind === 'ceiling') {
+      s.appendChild(segment([['down', 'Thổi xuống'], ['up', 'Hút lên']], f.mode, function (v) { f.mode = v; changed(); }, 'Chiều quay'));
+      s.appendChild(slider('Vị trí ngang', 0.6, 4.2, 0.1, f.x, 'm', function (v) { f.x = v; changed(); }, 1));
+      s.appendChild(segment([[1, 'Số 1'], [2, 'Số 2'], [3, 'Số 3']], f.speed, function (v) { f.speed = v; changed(); }, 'Tốc độ quạt'));
+    } else {
+      s.appendChild(segment([['L', 'Tường trái'], ['R', 'Tường phải']], f.side, function (v) { f.side = v; changed(); }, 'Vị trí quạt hút'));
+      s.appendChild(slider('Độ cao', 0.4, 2.5, 0.05, f.y, 'm', function (v) { f.y = v; changed(); }, 2));
+      s.appendChild(slider('Lưu lượng hút', 2, 20, 1, f.ach, 'lần/giờ', function (v) { f.ach = v; changed(); }));
+    }
+    box.appendChild(s);
+  });
+}
+function syncStatic() {
+  $('#sel-cap').value = String(cfg.cap);
+  $$('#seg-acspeed button').forEach(function (b, i) { b.setAttribute('aria-pressed', String(i === cfg.acSpeed)); });
+  $('#rng-setT').value = cfg.setT; $('#val-setT').textContent = cfg.setT + ' °C';
+  $('#rng-tOut').value = cfg.tOut; $('#val-tOut').textContent = cfg.tOut + ' °C';
+  $('#rng-tStart').value = cfg.tStart; $('#val-tStart').textContent = cfg.tStart + ' °C';
+  $('#rng-target').value = cfg.target; $('#val-target').textContent = cfg.target + ' °C';
+  $$('[data-open]').forEach(function (c) { c.checked = !!cfg.open[c.getAttribute('data-open')]; });
+  $('#p-count').textContent = cfg.people.length;
+}
+function syncAll() { syncStatic(); renderAC(); renderFans(); }
+
+function init() {
+  // tốc độ + lớp hiển thị
+  var sp = $('#seg-speed');
+  SPEEDS.forEach(function (s) {
+    var b = el('button', { type: 'button', text: s[1], 'aria-pressed': String(s[0] === ui.speed) });
+    b.addEventListener('click', function () { ui.speed = s[0]; $$('button', sp).forEach(function (x) { x.setAttribute('aria-pressed', 'false'); }); b.setAttribute('aria-pressed', 'true'); });
+    sp.appendChild(b);
+  });
+  var ly = $('#seg-layer');
+  [['T', 'Nhiệt độ'], ['C', 'CO₂'], ['V', 'Tốc độ gió']].forEach(function (s) {
+    var b = el('button', { type: 'button', text: s[1], 'aria-pressed': String(s[0] === ui.layer) });
+    b.addEventListener('click', function () { ui.layer = s[0]; $$('button', ly).forEach(function (x) { x.setAttribute('aria-pressed', 'false'); }); b.setAttribute('aria-pressed', 'true'); buildLegend(); });
+    ly.appendChild(b);
+  });
+  $('#chk-trails').addEventListener('change', function (e) { ui.trails = e.target.checked; });
+  $('#btn-play').addEventListener('click', function () { ui.playing = !ui.playing; this.textContent = ui.playing ? 'Tạm dừng' : 'Chạy tiếp'; });
+  $('#btn-reset').addEventListener('click', function () { sim.reset(); warm(); initParticles(); });
+  if (!ui.playing) $('#btn-play').textContent = 'Chạy tiếp';
+
+  var as = $('#seg-acspeed');
+  [['0', 'Nhẹ'], ['1', 'Vừa'], ['2', 'Mạnh']].forEach(function (o) {
+    var b = el('button', { type: 'button', text: o[1], 'aria-pressed': 'false' });
+    b.addEventListener('click', function () { cfg.acSpeed = +o[0]; $$('button', as).forEach(function (x) { x.setAttribute('aria-pressed', 'false'); }); b.setAttribute('aria-pressed', 'true'); changed(); });
+    as.appendChild(b);
+  });
+  $('#sel-cap').addEventListener('change', function (e) { cfg.cap = +e.target.value; changed(); });
+  function bindRange(id, key, valId, onChange) {
+    $(id).addEventListener('input', function (e) { cfg[key] = +e.target.value; $(valId).textContent = cfg[key] + ' °C'; if (onChange) onChange(); });
+  }
+  bindRange('#rng-setT', 'setT', '#val-setT');
+  bindRange('#rng-tOut', 'tOut', '#val-tOut');
+  bindRange('#rng-target', 'target', '#val-target', function () { sim.tReach = null; });
+  var tsT = null;
+  bindRange('#rng-tStart', 'tStart', '#val-tStart', function () { clearTimeout(tsT); tsT = setTimeout(function () { sim.reset(); warm(); }, 250); });
+  $$('[data-open]').forEach(function (c) { c.addEventListener('change', function () { cfg.open[c.getAttribute('data-open')] = c.checked; changed(); }); });
+  $$('[data-add]').forEach(function (b) { b.addEventListener('click', function () { if (cfg.fans.length >= 5) return; cfg.fans.push(newFan(b.getAttribute('data-add'))); changed(); renderFans(); }); });
+  var DEF_X = [1.7, 3.3, 2.5];
+  $('#p-minus').addEventListener('click', function () { if (cfg.people.length) { cfg.people.pop(); changed(); syncStatic(); } });
+  $('#p-plus').addEventListener('click', function () { if (cfg.people.length < 3) { cfg.people.push({ x: DEF_X[cfg.people.length] }); changed(); syncStatic(); } });
+  syncAll();
+  initDrag();
+  initCompare();
+}
+
+/* kéo thả trên hình */
+function initDrag() {
+  var drag = null;
+  function world(e) { var r = cv.getBoundingClientRect(), k = cv.width / r.width; return { x: ((e.clientX - r.left) * k) / sc - PAD.l, y: RH - (((e.clientY - r.top) * k) / sc - PAD.t) }; }
+  function pick(w) {
+    var best = null, bd = 1e9;
+    HIT.forEach(function (h) { var dx = (w.x - h.x) / h.rx, dy = (w.y - h.y) / h.ry, d = dx * dx + dy * dy; if (d < 1 && d < bd) { bd = d; best = h; } });
+    return best;
+  }
+  cv.addEventListener('pointerdown', function (e) {
+    var w = world(e), h = pick(w);
+    if (!h) return;
+    drag = h; cv.setPointerCapture(e.pointerId); cv.classList.add('grabbing'); e.preventDefault();
+  });
+  cv.addEventListener('pointermove', function (e) {
+    var w = world(e);
+    if (drag) {
+      var r = drag.ref;
+      if (drag.kind === 'fan') {
+        if (r.kind === 'stand') { r.x = clamp(w.x, 0.3, 4.5); r.y = clamp(w.y, 0.2, 1.6); }
+        else if (r.kind === 'ceiling') r.x = clamp(w.x, 0.6, 4.2);
+        else { r.y = clamp(w.y, 0.4, 2.5); r.side = w.x < RW / 2 ? 'L' : 'R'; }
+      } else if (drag.kind === 'person') r.x = clamp(w.x - 0.1, 0.3, 4.4);
+      else if (drag.kind === 'ac') {
+        if (r.type === 'ceil') r.x = clamp(w.x, 0.6, 4.2);
+        else if (r.type === 'wallL' || r.type === 'wallR') r.y = clamp(w.y + 0.2, 2.0, 2.7);
+      }
+      changed();
+    } else {
+      cv.classList.toggle('grab', !!pick(w));
+      hover = (w.x >= 0 && w.x <= RW && w.y >= 0 && w.y <= RH) ? w : null;
+      if (!hover) $('#probe').hidden = true;
+    }
+  });
+  function end() { if (drag) { drag = null; cv.classList.remove('grabbing'); renderAC(); renderFans(); } }
+  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+  cv.addEventListener('pointerleave', function () { hover = null; $('#probe').hidden = true; });
+}
+
+/* ---------- so sánh phương án ---------- */
+var results = {}, running = false;
+function cfgForCompare(preset) {
+  var c = preset.cfg();
+  ['tOut', 'tStart', 'target', 'setT'].forEach(function (k) { c[k] = cfg[k]; });
+  c.people = cfg.people.map(function (p) { return { x: p.x }; });
+  c.cap = cfg.cap; c.acSpeed = cfg.acSpeed;
+  return c;
+}
+function initCompare() {
+  renderCompare();
+  $('#btn-compare').addEventListener('click', runCompare);
+}
+function best(key, lower) {
+  var b = null;
+  PRESETS.forEach(function (p) { var r = results[p.id]; if (!r || r[key] === null || r[key] === undefined) return; if (b === null || (lower ? r[key] < results[b][key] : r[key] > results[b][key])) b = p.id; });
+  return b;
+}
+function renderCompare() {
+  var body = $('#cmp-body'); body.innerHTML = '';
+  var bTime = best('tReach', true), b10 = best('tp10', true), b20 = best('tPeople', true), bC = best('cPeople', true), bS = best('tStd', true);
+  var maxT = 20;
+  PRESETS.forEach(function (p) {
+    var r = results[p.id], tr = el('tr');
+    var name = el('td', {}, [el('span', { class: 'nm', text: p.name }), el('span', { class: 'ds', text: p.desc })]);
+    var view = el('button', { type: 'button', class: 'btn small', text: 'Xem trên hình', style: 'margin-top:6px' });
+    view.addEventListener('click', function () { loadPreset(p); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+    name.appendChild(view);
+    tr.appendChild(name);
+    function td(txt, cls) { return el('td', { class: cls || '', html: txt }); }
+    if (!r) { for (var i = 0; i < 7; i++) tr.appendChild(td('—', 'pending')); body.appendChild(tr); return; }
+    var reach = r.tReach === null ? '<span class="barcell"><span>không đạt</span><i class="miss" style="width:' + 100 + 'px"></i></span>' : '<span class="barcell"><span>' + fmt(r.tReach / 60, 1) + '</span><i style="width:' + Math.max(2, r.tReach / 60 / maxT * 100) + 'px"></i></span>';
+    tr.appendChild(td(reach, p.id === bTime ? 'best' : (r.tReach === null ? 'bad' : '')));
+    tr.appendChild(td(r.tp10 === null ? '—' : fmt(r.tp10, 1), p.id === b10 ? 'best' : ''));
+    tr.appendChild(td(fmt(r.tPeople, 1), p.id === b20 ? 'best' : ''));
+    tr.appendChild(td(fmt(r.draft, 2), r.draft > 0.5 ? 'bad' : ''));
+    tr.appendChild(td(String(Math.round(r.cPeople)), p.id === bC ? 'best' : (r.cPeople > 1200 ? 'bad' : '')));
+    tr.appendChild(td(fmt(r.tStd, 2), p.id === bS ? 'best' : ''));
+    tr.appendChild(td(fmt(r.ach, 1), ''));
+    body.appendChild(tr);
+  });
+  var tk = $('#takeaways');
+  if (Object.keys(results).length === PRESETS.length) {
+    tk.hidden = false; tk.innerHTML = '';
+    function nm(id) { return id ? PRESETS.filter(function (p) { return p.id === id; })[0].name : 'Không phương án nào đạt'; }
+    function add(k, id, extra) { tk.appendChild(el('div', { class: 'take' }, [el('div', { class: 'k', text: k }), el('div', { class: 'v', text: nm(id) }), el('div', { class: 'k', text: extra || '' })])); }
+    add('Đạt ' + cfg.target + ' °C tại người sớm nhất', bTime, bTime ? fmt(results[bTime].tReach / 60, 1) + ' phút' : '');
+    add('Nhiệt độ thấp nhất sau 20 phút', b20, b20 ? fmt(results[b20].tPeople, 1) + ' °C' : '');
+    add('CO₂ thấp nhất', bC, bC ? Math.round(results[bC].cPeople) + ' ppm' : '');
+    var g = best('draft', true);
+  } else tk.hidden = true;
+}
+function loadPreset(p) {
+  var c = cfgForCompare(p);
+  cfg = c; sim.cfg = c; sim.rebuild(); sim.reset(); warm(); initParticles(); syncAll();
+}
+var workers = [];
+function runCompare() {
+  if (running) return;
+  running = true; results = {}; renderCompare();
+  var btn = $('#btn-compare'), bar = $('#cmp-bar'), st = $('#cmp-status');
+  btn.disabled = true; btn.textContent = 'Đang chạy…';
+  var queue = PRESETS.slice(), done = 0, prog = {}, TMAX = 1200;
+  function updBar() { var s = done; for (var k in prog) s += prog[k]; bar.style.width = (s / PRESETS.length * 100) + '%'; st.textContent = done + '/' + PRESETS.length + ' phương án'; }
+  function finish() { running = false; btn.disabled = false; btn.textContent = 'Chạy lại so sánh'; st.textContent = 'Xong'; bar.style.width = '100%'; renderCompare(); terminate(); }
+  function terminate() { workers.forEach(function (w) { w.terminate(); }); workers = []; }
+  var useWorkers = typeof Worker !== 'undefined', blobUrl = null;
+  if (useWorkers) {
+    try {
+      var src = document.getElementById('sim-src').textContent +
+        ';self.onmessage=function(e){var d=e.data,sim=new AirSim.Sim(d.cfg);while(sim.t<d.tmax){sim.step();if(sim.stepN%300===0)self.postMessage({id:d.id,p:sim.t/d.tmax});}' +
+        'self.postMessage({id:d.id,done:1,summary:sim.summary()});};';
+      blobUrl = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      var n = clamp((navigator.hardwareConcurrency || 4) - 1, 2, 4);
+      var next = function (w) {
+        var p = queue.shift();
+        if (!p) { return; }
+        w.cur = p.id; w.postMessage({ id: p.id, cfg: cfgForCompare(p), tmax: TMAX });
+      };
+      for (var i = 0; i < n; i++) {
+        (function () {
+          var w = new Worker(blobUrl); workers.push(w);
+          w.onmessage = function (e) {
+            var d = e.data;
+            if (d.done) { results[d.id] = d.summary; delete prog[d.id]; done++; renderCompare(); updBar(); if (done === PRESETS.length) finish(); else next(w); }
+            else { prog[d.id] = d.p; updBar(); }
+          };
+          w.onerror = function () { terminate(); useWorkers = false; runSerial(); };
+          next(w);
+        })();
+      }
+      return;
+    } catch (err) { terminate(); }
+  }
+  runSerial();
+  function runSerial() {
+    queue = PRESETS.filter(function (p) { return !results[p.id]; }); done = Object.keys(results).length; prog = {};
+    var cur = null, s2 = null;
+    function tick() {
+      if (!running) return;
+      var t0 = performance.now();
+      while (performance.now() - t0 < 12) {
+        if (!s2) { cur = queue.shift(); if (!cur) { finish(); return; } s2 = new A.Sim(cfgForCompare(cur)); }
+        s2.step(); if (s2.stepN % 300 === 0) prog[cur.id] = s2.t / TMAX;
+        if (s2.t >= TMAX) { results[cur.id] = s2.summary(); delete prog[cur.id]; done++; s2 = null; renderCompare(); }
+      }
+      updBar(); setTimeout(tick, 0);
+    }
+    tick();
+  }
+}
+
+/* ---------- khởi động ---------- */
+function warm() { for (var i = 0; i < 80; i++) sim.step(); }
+readTokens();
+new MutationObserver(readTokens).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readTokens);
+window.addEventListener('resize', resize);
+resize();
+init();
+warm(); initParticles();
+requestAnimationFrame(frame);
+})();
+</script>
