@@ -1683,7 +1683,16 @@ var CO2_LEVELS = [
   [1000, 0, 'warn', 'Lưu ý', 'CO₂ từ 1.000 ppm: vượt mức khuyến nghị thông gió thường dùng.']
 ];
 function co2Level(c) { for (var i = 0; i < CO2_LEVELS.length; i++) if (c >= CO2_LEVELS[i][0]) return CO2_LEVELS[i]; return null; }
-var lastAlarmRank = -1, audioCtx = null;
+var lastAlarmRank = -1, audioCtx = null, lvlState = {}, co2S = null, curCo2Lv = null;
+var CO2_TH = [1000, 1500, 2000, 5000, 30000];
+function resetAlarms() { lastAlarmRank = -1; lvlState = {}; co2S = null; curCo2Lv = null; }
+/* mức cảnh báo có độ trễ: vào mức khi vượt ngưỡng, chỉ thoát khi giảm xuống dưới ngưỡng trừ một khoảng đệm, để cảnh báo không nhấp nháy */
+function stepLevel(key, val, th, marg, isFrac) {
+  var cur = lvlState[key] == null ? -1 : lvlState[key];
+  while (cur + 1 < th.length && val >= th[cur + 1]) cur++;
+  while (cur >= 0 && val < th[cur] - (isFrac ? marg * th[cur] : marg)) cur--;
+  lvlState[key] = cur; return cur;
+}
 function beep(rank) {
   if (!$('#chk-beep').checked) return;
   try {
@@ -1703,19 +1712,24 @@ function co2Slope() {   // ppm trên giây, theo khoảng hai phút mô phỏng 
 }
 function renderAlarms(m) {
   var box = $('#alarms'), items = [], rank = -1, i;
-  var lv = co2Level(m.cPeople);
+  co2S = co2S == null ? m.cPeople : co2S * 0.85 + m.cPeople * 0.15;       // làm mượt dao động cục bộ
+  var li = stepLevel('co2', co2S, CO2_TH, 0.07, true), lv = li >= 0 ? CO2_LEVELS[CO2_LEVELS.length - 1 - li] : null;
+  curCo2Lv = lv;
+  var sl = co2Slope();
   if (lv) {
-    var next = null; for (i = CO2_LEVELS.length - 1; i >= 0; i--) if (CO2_LEVELS[i][0] > m.cPeople) { next = CO2_LEVELS[i]; break; }
-    var sl = co2Slope(), pred = '';
-    if (next && sl > 0.002) { var mins = (next[0] - m.cPeople) / sl / 60; if (mins < 600) pred = ' Với tốc độ hiện tại sẽ chạm ' + fmtInt(next[0]) + ' ppm sau khoảng ' + (mins < 1 ? 'dưới 1' : Math.round(mins)) + ' phút.'; }
-    items.push({ cls: lv[2], t: lv[3] + ': CO₂ ' + fmtInt(m.cPeople) + ' ppm', d: lv[4] + pred });
+    var pred = '';
+    if (li + 1 < CO2_TH.length && sl > 0.002) { var mins = (CO2_TH[li + 1] - co2S) / sl / 60; if (mins < 600) pred = ' Với tốc độ hiện tại sẽ chạm ' + fmtInt(CO2_TH[li + 1]) + ' ppm sau khoảng ' + (mins < 1 ? 'dưới 1' : Math.round(mins)) + ' phút.'; }
+    items.push({ cls: lv[2], t: lv[3] + ': CO₂ ' + fmtInt(co2S) + ' ppm', d: lv[4] + pred });
     rank = lv[1];
-  } else if (m.cPeople > 800) {
-    var sl2 = co2Slope(); if (sl2 > 0.002) { var mn = (1000 - m.cPeople) / sl2 / 60; if (mn < 600) items.push({ cls: 'warn', t: 'CO₂ ' + fmtInt(m.cPeople) + ' ppm đang tăng', d: 'Sẽ chạm 1.000 ppm sau khoảng ' + Math.max(1, Math.round(mn)) + ' phút nếu không tăng thông gió.' }); }
+  } else if (stepLevel('co2pre', co2S, [850], 40) >= 0 && sl > 0.001) {
+    var mn = (1000 - co2S) / sl / 60; if (mn < 600) items.push({ cls: 'warn', t: 'CO₂ ' + fmtInt(co2S) + ' ppm đang tăng', d: 'Sẽ chạm 1.000 ppm sau khoảng ' + Math.max(1, Math.round(mn)) + ' phút nếu không tăng thông gió.' });
   }
-  if (m.humidex >= 35) items.push({ cls: m.humidex >= 46 ? 'crit' : (m.humidex >= 40 ? 'bad' : 'warn'), t: 'Nóng ẩm khó chịu: humidex ' + Math.round(m.humidex), d: m.humidex >= 46 ? 'Mức nguy hiểm với người ở lâu. Hạ nhiệt độ và độ ẩm ngay.' : 'Mồ hôi khó bay hơi. Cần giảm nhiệt độ hoặc khử ẩm.' });
-  if (m.rhPeople >= 0.75) items.push({ cls: m.rhPeople >= 0.85 ? 'bad' : 'warn', t: 'Độ ẩm cao ' + Math.round(m.rhPeople * 100) + '%', d: 'Dễ đọng sương và nấm mốc nếu kéo dài. Giữ RH dưới 60 đến 70%.' });
-  if (m.vPeople > 0.5 && cfg.people.length) items.push({ cls: 'warn', t: 'Gió thổi thẳng vào người ' + fmt(m.vPeople, 2) + ' m/s', d: 'Dễ bị lùa gió. Đổi hướng quạt hoặc góc thổi.' });
+  var hl = stepLevel('hx', m.humidex, [35, 40, 46], 1.5);
+  if (hl >= 0) items.push({ cls: hl >= 2 ? 'crit' : (hl === 1 ? 'bad' : 'warn'), t: 'Nóng ẩm khó chịu: humidex ' + Math.round(m.humidex), d: hl >= 2 ? 'Mức nguy hiểm với người ở lâu. Hạ nhiệt độ và độ ẩm ngay.' : 'Mồ hôi khó bay hơi. Cần giảm nhiệt độ hoặc khử ẩm.' });
+  var rl = stepLevel('rh', m.rhPeople, [0.75, 0.85], 0.04);
+  if (rl >= 0) items.push({ cls: rl >= 1 ? 'bad' : 'warn', t: 'Độ ẩm cao ' + Math.round(m.rhPeople * 100) + '%', d: 'Dễ đọng sương và nấm mốc nếu kéo dài. Giữ RH dưới 60 đến 70%.' });
+  var dl = cfg.people.length ? stepLevel('dr', m.vPeople, [0.5], 0.08) : -1;
+  if (dl >= 0) items.push({ cls: 'warn', t: 'Gió thổi thẳng vào người ' + fmt(m.vPeople, 2) + ' m/s', d: 'Dễ bị lùa gió. Đổi hướng quạt hoặc góc thổi.' });
   box.innerHTML = '';
   items.forEach(function (it) { box.appendChild(el('div', { class: 'alarm ' + it.cls, role: it.cls === 'crit' || it.cls === 'bad' ? 'alert' : 'status' }, [el('b', { text: it.t }), el('span', { text: it.d })])); });
   if (rank > lastAlarmRank && rank >= 1) beep(rank);
@@ -1723,6 +1737,7 @@ function renderAlarms(m) {
 }
 function renderMetrics() {
   var m = sim.computeMetrics(), box = $('#metrics'); box.innerHTML = '';
+  renderAlarms(m);
   var hasP = cfg.people.length > 0;
   box.appendChild(tile(hasP ? 'Nhiệt độ tại người' : 'Nhiệt độ vùng sinh hoạt', fmt(m.tPeople, 1), '°C', 'Cả vùng sinh hoạt ' + fmt(m.tZone, 1) + ' °C'));
   var reach = sim.tReach !== null ? pill('good', 'Đã đạt') : pill('idle', 'Đang chờ');
@@ -1730,15 +1745,14 @@ function renderMetrics() {
   box.appendChild(tile('Độ ẩm tại người', String(Math.round(m.rhPeople * 100)), '% RH', rhLabel(m.rhPeople) + ' <span class="note">Điểm sương ' + fmt(m.dewPeople, 1) + ' °C</span>'));
   box.appendChild(tile('Ẩm khó chịu (humidex)', String(Math.round(m.humidex)), '', humidexLabel(m.humidex)));
   box.appendChild(tile('Mức ngột ngạt', String(Math.round(m.stuff)), '/ 100', stuffLabel(m.stuff)));
-  var lv = co2Level(m.cPeople);
-  box.appendChild(tile('CO₂ tại người', fmtInt(m.cPeople), 'ppm', lv ? pill(lv[2] === 'warn' ? 'warn' : 'bad', lv[3]) : pill('good', 'Thoáng')));
+  var lv = curCo2Lv;
+  box.appendChild(tile('CO₂ tại người', fmtInt(co2S == null ? m.cPeople : co2S), 'ppm', lv ? pill(lv[2] === 'warn' ? 'warn' : 'bad', lv[3]) : pill('good', 'Thoáng')));
   var v = m.vPeople, vp = v < 0.2 ? pill('good', 'Êm') : (v <= 0.5 ? pill('warn', 'Gió nhẹ') : pill('bad', 'Dễ bị lùa'));
   box.appendChild(tile('Gió lên người', fmt(v, 2), 'm/s', hasP ? vp : 'Chưa có người'));
   box.appendChild(tile('Chênh nhiệt trong phòng', '±' + fmt(m.tStd, 1), '°C', 'Lạnh nhất ' + fmt(m.tMin, 1) + ', nóng nhất ' + fmt(m.tMax, 1)));
   box.appendChild(tile('Khí ngoài vào', fmt(m.ach, 1), 'lần/giờ', m.ach > 0.2 ? 'Mang theo nhiệt và ẩm từ ngoài' : 'Phòng kín'));
   var load = Math.round((sim.pf == null ? 1 : sim.pf) * 100);
   box.appendChild(tile('Máy lạnh đang chạy', String(load), '% công suất', 'Cài đặt ' + cfg.setT + ' °C'));
-  renderAlarms(m);
 }
 
 /* ---------- đánh giá kỹ thuật ---------- */
@@ -1985,7 +1999,7 @@ function applyRoom(oldRH) {
     else if (f.kind === 'ceiling') f.x = clamp(f.x, 0.6, RW - 0.6);
     else f.y = clamp(f.y, 0.3, RH - 0.5);
   });
-  sim.rebuild(); warm(); resize(); initParticles(); syncAll(); V3.dirty = true; engDirty = true; lastAlarmRank = -1;
+  sim.rebuild(); warm(); resize(); initParticles(); syncAll(); V3.dirty = true; engDirty = true; resetAlarms();
 }
 
 function pickSeg(sel, opts, cur, onPick) {
@@ -2012,7 +2026,7 @@ function init() {
   pickSeg('#seg-env', [[0, 'Tốt'], [1, 'Thường'], [2, 'Kém']], cfg.env, function (v) { cfg.env = +v; changed(); });
   $('#chk-trails').addEventListener('change', function (e) { ui.trails = e.target.checked; });
   $('#btn-play').addEventListener('click', function () { ui.playing = !ui.playing; this.textContent = ui.playing ? 'Tạm dừng' : 'Chạy tiếp'; });
-  $('#btn-reset').addEventListener('click', function () { sim.reset(); warm(); initParticles(); lastAlarmRank = -1; });
+  $('#btn-reset').addEventListener('click', function () { sim.reset(); warm(); initParticles(); resetAlarms(); });
   if (!ui.playing) $('#btn-play').textContent = 'Chạy tiếp';
 
   $('#rng-acspeed').addEventListener('input', function (e) { cfg.acSpeed = +e.target.value - 1; $('#val-acspeed').textContent = 'Số ' + e.target.value + ' · gió ra ' + fmt(A.JET[cfg.acSpeed], 1) + ' m/s'; changed(); });
@@ -2025,7 +2039,7 @@ function init() {
   bindRange('rhOut', ' %', function () { V3.dirty = true; engDirty = true; });
   bindRange('target', ' °C', function () { sim.tReach = null; noteSetT(); });
   var tsT = null;
-  function restart() { clearTimeout(tsT); tsT = setTimeout(function () { sim.reset(); warm(); lastAlarmRank = -1; }, 250); }
+  function restart() { clearTimeout(tsT); tsT = setTimeout(function () { sim.reset(); warm(); resetAlarms(); }, 250); }
   bindRange('tStart', ' °C', restart); bindRange('rhStart', ' %', restart); bindRange('cStart', ' ppm', restart);
   var tr = null;
   function bindRoom(key) {
@@ -2127,7 +2141,7 @@ function renderCompare() {
 }
 function loadPreset(p) {
   var c = cfgForCompare(p);
-  cfg = c; sim = new A.Sim(c); dims(); warm(); resize(); initParticles(); syncAll(); V3.dirty = true; engDirty = true; lastAlarmRank = -1;
+  cfg = c; sim = new A.Sim(c); dims(); warm(); resize(); initParticles(); syncAll(); V3.dirty = true; engDirty = true; resetAlarms();
 }
 var workers = [];
 function runCompare() {
